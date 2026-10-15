@@ -28,6 +28,8 @@ docker-compose.yml  Postgres + Redis
 ```bash
 # 1. Environment
 cp .env.example .env
+# optional: copy API URL into the web app
+cp .env.example apps/web/.env.local   # or set NEXT_PUBLIC_API_URL only
 
 # 2. Dependencies
 make install
@@ -35,7 +37,7 @@ make install
 # 3. Data services
 make up
 
-# 4. Migrations (stub for now)
+# 4. Migrations
 make migrate
 
 # 5. API (http://127.0.0.1:8741)
@@ -49,6 +51,24 @@ make web
 
 If Compose is unavailable, point `DATABASE_URL` and `REDIS_URL` in `.env` at local Postgres 16 and Redis 7 instances with the credentials from `.env.example`, then run `make api` and `make web`.
 
+## Auth model
+
+DevDeploy uses **FastAPI-owned httpOnly session cookies** (not NextAuth/Auth.js).
+
+| Flow | How it works |
+|------|----------------|
+| Email + password | `POST /api/v1/auth/register` and `/login` |
+| Email magic link | Request token → verify (email delivery stubbed; token returned in mock mode) |
+| Phone SMS OTP | Start → verify (`AUTH_MOCK_MODE` uses code `000000` by default) |
+| Google / GitHub / Apple / Microsoft | `/api/v1/auth/oauth/{provider}/start` → callback |
+
+- Sessions are stored in Postgres (`sessions` table); cookie name defaults to `devdeploy_session`.
+- Users can link multiple providers (`auth_identities`); email/phone are unique when present.
+- **`AUTH_MOCK_MODE=true` (default)** makes OAuth and SMS demonstrable without real credentials.
+- **GitHub App repository install** is intentionally separate from user sign-in (Milestone 2+).
+
+Web pages: `/login`, `/signup`. `/dashboard` requires a session (client checks `GET /api/v1/auth/me`).
+
 ## Health checks
 
 | Endpoint | Purpose |
@@ -60,9 +80,9 @@ API docs: [http://127.0.0.1:8741/docs](http://127.0.0.1:8741/docs)
 
 ## Current milestone
 
-**Milestone 1 (foundation):** monorepo, Compose, FastAPI health/DB/Alembic skeleton, Next.js landing + dashboard placeholder.
+**Milestone 1:** monorepo, Compose, FastAPI health/DB/Alembic, multi-provider auth surface, Next.js landing + gated dashboard.
 
-Not yet in this slice: GitHub OAuth, project CRUD, Jenkins, Kubernetes, AWS.
+Not yet: project CRUD, GitHub App repo install, Jenkins, Kubernetes, AWS.
 
 ## License
 

@@ -19,12 +19,20 @@ export default function Home() {
         <p className="font-[family-name:var(--font-display)] text-lg font-bold tracking-tight text-ink">
           DevDeploy
         </p>
-        <Link
-          href="/dashboard"
-          className="text-sm font-medium text-muted-foreground transition-colors hover:text-ink"
-        >
-          Dashboard
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link
+            href="/login"
+            className="text-sm font-medium text-muted-foreground transition-colors hover:text-ink"
+          >
+            Sign in
+          </Link>
+          <Link
+            href="/signup"
+            className="text-sm font-medium text-ink transition-colors hover:text-signal"
+          >
+            Sign up
+          </Link>
+        </div>
       </header>
 
       <main className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-center px-6 pb-20 pt-6 sm:px-10 sm:pb-28">
@@ -41,20 +49,20 @@ export default function Home() {
           </p>
           <div className="dd-rise dd-rise-delay-3 mt-8 flex flex-wrap items-center gap-3">
             <Button
-              render={<Link href="/dashboard" />}
+              render={<Link href="/signup" />}
               size="lg"
               className="h-11 gap-2 rounded-md bg-signal px-5 text-signal-foreground hover:bg-signal/90"
             >
-              Open dashboard
+              Get started
               <ArrowRight data-icon="inline-end" className="size-4" />
             </Button>
             <Button
-              render={<Link href="/dashboard" />}
+              render={<Link href="/login" />}
               variant="outline"
               size="lg"
               className="h-11 rounded-md border-border/80 bg-white/40 px-5 backdrop-blur-sm"
             >
-              View projects
+              Sign in
             </Button>
           </div>
         </div>
