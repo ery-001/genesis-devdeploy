@@ -65,9 +65,45 @@ DevDeploy uses **FastAPI-owned httpOnly session cookies** (not NextAuth/Auth.js)
 - Sessions are stored in Postgres (`sessions` table); cookie name defaults to `devdeploy_session`.
 - Users can link multiple providers (`auth_identities`); email/phone are unique when present.
 - **`AUTH_MOCK_MODE=true` (default)** makes OAuth and SMS demonstrable without real credentials.
-- **GitHub App repository install** is intentionally separate from user sign-in (Milestone 2+).
+- **GitHub App repository install** is intentionally separate from user sign-in.
 
 Web pages: `/login`, `/signup`. `/dashboard` requires a session (client checks `GET /api/v1/auth/me`).
+
+## GitHub App (Milestone 2)
+
+Repo access uses a **GitHub App installation**, not a user PAT.
+
+### Local mock (default)
+
+With `GITHUB_MOCK_MODE=true` (or missing App credentials):
+
+1. Open a project → **Connect mock GitHub App**
+2. Pick a mock repo → **Attach**
+3. Set deploy branch → **Deploy** (creates a `queued` deployment job)
+4. Optional webhook test:
+
+```bash
+BODY='{"ref":"refs/heads/main","repository":{"full_name":"mock-org/sample-fastapi-app"},"after":"abc123","head_commit":{"id":"abc123"}}'
+SIG="sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "devdeploy-local-webhook-secret" | awk '{print $2}')"
+curl -sS -X POST http://127.0.0.1:8741/api/v1/webhooks/github \
+  -H "Content-Type: application/json" \
+  -H "X-Hub-Signature-256: $SIG" \
+  -H "X-GitHub-Delivery: $(uuidgen)" \
+  -H "X-GitHub-Event: push" \
+  -d "$BODY"
+```
+
+### Real GitHub App setup
+
+1. Create a GitHub App (Settings → Developer settings → GitHub Apps).
+2. Permissions: **Contents** read, **Metadata** read, **Webhooks** receive; subscribe to **push** (and `installation` if desired).
+3. Webhook URL: `https://<your-api-host>/api/v1/webhooks/github`
+4. Webhook secret → `GITHUB_APP_WEBHOOK_SECRET`
+5. Generate a private key; set `GITHUB_APP_ID`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, and either `GITHUB_APP_PRIVATE_KEY` (PEM) or `GITHUB_APP_PRIVATE_KEY_PATH`
+6. Set `GITHUB_APP_SLUG` to the app slug; set `GITHUB_MOCK_MODE=false`
+7. Install the App on orgs/repos you trust, then attach repos from the project UI
+
+Real installation-token repo listing is stubbed until credentials are present; mock mode covers the full attach → queue path locally.
 
 ## Health checks
 
@@ -80,9 +116,9 @@ API docs: [http://127.0.0.1:8741/docs](http://127.0.0.1:8741/docs)
 
 ## Current milestone
 
-**Milestone 1:** monorepo, Compose, FastAPI health/DB/Alembic, multi-provider auth, project CRUD + dashboard.
+**Milestone 2:** GitHub App install (mockable), repo attach, signed webhooks + delivery dedupe, queued deployment jobs (manual + push).
 
-Not yet: GitHub App repo install, Jenkins, Kubernetes, AWS.
+Not yet: Jenkins/builds, Kubernetes, AWS.
 
 ## License
 
