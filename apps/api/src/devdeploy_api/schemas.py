@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -58,3 +59,31 @@ class AuthConfigOut(BaseModel):
     mock_mode: bool
     providers: list[str]
     session_cookie: str
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    slug: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=4000)
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    slug: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=4000)
+
+
+class ProjectOut(BaseModel):
+    id: UUID
+    organization_id: UUID
+    owner_user_id: UUID
+    name: str
+    slug: str
+    description: str | None = None
+    github_repo_full_name: str | None = None
+    default_branch: str | None = None
+    dockerfile_path: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

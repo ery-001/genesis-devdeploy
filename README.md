@@ -80,9 +80,9 @@ API docs: [http://127.0.0.1:8741/docs](http://127.0.0.1:8741/docs)
 
 ## Current milestone
 
-**Milestone 1:** monorepo, Compose, FastAPI health/DB/Alembic, multi-provider auth surface, Next.js landing + gated dashboard.
+**Milestone 1:** monorepo, Compose, FastAPI health/DB/Alembic, multi-provider auth, project CRUD + dashboard.
 
-Not yet: project CRUD, GitHub App repo install, Jenkins, Kubernetes, AWS.
+Not yet: GitHub App repo install, Jenkins, Kubernetes, AWS.
 
 ## License
 

@@ -115,3 +115,50 @@ export function verifyPhoneOtp(phone: string, code: string) {
 export function oauthStartUrl(provider: string) {
   return `${API_URL}/api/v1/auth/oauth/${provider}/start`;
 }
+
+export type Project = {
+  id: string;
+  organization_id: string;
+  owner_user_id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  github_repo_full_name: string | null;
+  default_branch: string | null;
+  dockerfile_path: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export function listProjects() {
+  return api<Project[]>("/api/v1/projects");
+}
+
+export function getProject(id: string) {
+  return api<Project>(`/api/v1/projects/${id}`);
+}
+
+export function createProject(body: {
+  name: string;
+  slug?: string;
+  description?: string;
+}) {
+  return api<Project>("/api/v1/projects", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateProject(
+  id: string,
+  body: { name?: string; slug?: string; description?: string },
+) {
+  return api<Project>(`/api/v1/projects/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteProject(id: string) {
+  return api<void>(`/api/v1/projects/${id}`, { method: "DELETE" });
+}
