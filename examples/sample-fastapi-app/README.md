@@ -1,5 +1,15 @@
 # sample-fastapi-app
 
-Placeholder for a minimal Dockerfile-based HTTP app used to prove the DevDeploy path (`/`, `/health`, `/version`).
+Minimal Dockerfile HTTP app used as a DevDeploy deploy target.
 
-Coming in a later milestone.
+- `GET /`
+- `GET /health`
+- `GET /version`
+
+Build locally (when Docker is available):
+
+```bash
+docker build -t sample-fastapi-app .
+```
+
+In Milestone 3 mock mode, DevDeploy invents an immutable digest without requiring Docker.

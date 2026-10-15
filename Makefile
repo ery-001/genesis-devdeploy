@@ -1,4 +1,4 @@
-.PHONY: up down api web migrate install help
+.PHONY: up down api web worker migrate install test help
 
 COMPOSE ?= docker compose
 API_PORT ?= 8741
@@ -10,8 +10,10 @@ help:
 	@echo "  make down     Stop Compose services"
 	@echo "  make api      Run FastAPI (uvicorn) on :$(API_PORT)"
 	@echo "  make web      Run Next.js on :$(WEB_PORT)"
-	@echo "  make migrate  Run Alembic migrations (stub)"
+	@echo "  make worker   Run deployment pipeline worker"
+	@echo "  make migrate  Run Alembic migrations"
 	@echo "  make install  Install API + web dependencies"
+	@echo "  make test     Run API pytest suite"
 
 up:
 	$(COMPOSE) up -d postgres redis
@@ -25,9 +27,16 @@ api:
 web:
 	cd apps/web && npm run dev -- --hostname 127.0.0.1 --port $(WEB_PORT)
 
+worker:
+	cd apps/api && uv run python -m devdeploy_api.worker
+
 migrate:
 	cd apps/api && uv run alembic upgrade head
 
 install:
 	cd apps/api && uv sync
 	cd apps/web && npm install
+
+test:
+	cd apps/api && uv run pytest -q
+

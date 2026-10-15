@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     github_app_slug: str = "devdeploy-local"
     github_mock_mode: bool = True
 
+    # Milestone 3–5 runtime adapters (mock by default)
+    build_mock_mode: bool = True
+    k8s_mock_mode: bool = True
+    aws_mock_mode: bool = True
+    aws_region: str = "us-east-1"
+    ecr_registry: str = ""
+    eks_cluster_name: str = ""
+
     @property
     def github_app_configured(self) -> bool:
         return bool(

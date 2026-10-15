@@ -18,6 +18,8 @@ from devdeploy_api.schemas import (
     ProjectUpdate,
 )
 
+# DeploymentJobOut still used by list_project_deployments
+
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
@@ -106,20 +108,6 @@ def attach_github_repo(
         deploy_branch=body.deploy_branch,
     )
     return ProjectOut.model_validate(project)
-
-
-@router.post(
-    "/{project_id}/deploy",
-    response_model=DeploymentJobOut,
-    status_code=status.HTTP_201_CREATED,
-)
-def deploy_project(
-    project_id: UUID,
-    db: DbSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-) -> DeploymentJobOut:
-    job = github_service.manual_deploy(db, user, project_id)
-    return DeploymentJobOut.model_validate(job)
 
 
 @router.get("/{project_id}/deployments", response_model=list[DeploymentJobOut])

@@ -162,6 +162,7 @@ def enqueue_deployment(
     commit_sha: str | None = None,
     delivery_id: str | None = None,
     message: str | None = None,
+    simulate_failure: bool = False,
 ) -> DeploymentJob:
     if not project.github_repo_full_name:
         raise HTTPException(
@@ -175,7 +176,8 @@ def enqueue_deployment(
         git_ref=git_ref or project.deploy_branch or project.default_branch or "main",
         commit_sha=commit_sha,
         github_delivery_id=delivery_id,
-        message=message or "Queued for build (Milestone 3)",
+        message=message or "Queued for build → publish → deploy",
+        simulate_failure=simulate_failure,
     )
     db.add(job)
     db.commit()
@@ -211,7 +213,13 @@ def list_deployments(db: DbSession, user: User, project_id: uuid.UUID) -> list[D
     )
 
 
-def manual_deploy(db: DbSession, user: User, project_id: uuid.UUID) -> DeploymentJob:
+def manual_deploy(
+    db: DbSession,
+    user: User,
+    project_id: uuid.UUID,
+    *,
+    simulate_failure: bool = False,
+) -> DeploymentJob:
     project = get_project_for_user(db, user, project_id)
     return enqueue_deployment(
         db,
@@ -219,6 +227,7 @@ def manual_deploy(db: DbSession, user: User, project_id: uuid.UUID) -> Deploymen
         trigger="manual",
         git_ref=project.deploy_branch or project.default_branch,
         message="Manual deploy requested",
+        simulate_failure=simulate_failure,
     )
 
 

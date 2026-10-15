@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: devdeploy-api
+    static_configs:
+      - targets: ["host.docker.internal:8741"]
+    metrics_path: /metrics
+    # Control-plane Prometheus exposition can be added later; UI uses mock metrics today.

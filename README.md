@@ -114,11 +114,36 @@ Real installation-token repo listing is stubbed until credentials are present; m
 
 API docs: [http://127.0.0.1:8741/docs](http://127.0.0.1:8741/docs)
 
+## Pipeline (Milestones 3–6)
+
+Default path is **mock-first** (no Docker / kind / AWS required):
+
+```bash
+make migrate
+make api          # also drains the queue synchronously on Deploy for demos
+# optional background worker:
+make worker
+make web
+make test
+```
+
+Lifecycle: `queued → building → publishing → deploying → succeeded|failed`.
+
+- Failed builds **retain** the last healthy release.
+- **Rollback** restores the previous release.
+- Build logs appear on the project page; metrics/alerts are mock API stubs (`monitoring/` has Prom/Grafana skeletons).
+- Terraform under `infrastructure/terraform/` — keep `AWS_MOCK_MODE=true` unless you intentionally `apply` (see that README for cost notes).
+
+### Five demos
+1. Deploy → succeeded with digest + app URL  
+2. Webhook push → job (deduped on replay)  
+3. Simulated failure → prior release stays current  
+4. Rollback to previous digest  
+5. Metrics panel on project page  
+
 ## Current milestone
 
-**Milestone 2:** GitHub App install (mockable), repo attach, signed webhooks + delivery dedupe, queued deployment jobs (manual + push).
-
-Not yet: Jenkins/builds, Kubernetes, AWS.
+**Milestones 1–6 foundation:** auth, projects, GitHub App (mock), build/deploy pipeline (mock), release/rollback, AWS/Terraform stubs, observability stubs + tests.
 
 ## License
 
