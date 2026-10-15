@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 import phonenumbers
 from fastapi import HTTPException, Response, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session as DbSession
+from sqlalchemy.orm import Session as DbSession, joinedload
 
 from devdeploy_api.config import Settings
 from devdeploy_api.models import AuthIdentity, Session, User
@@ -104,7 +104,7 @@ def get_user_by_session_token(
     user = db.execute(
         select(User)
         .where(User.id == session.user_id)
-        .options(__import__("sqlalchemy.orm", fromlist=["joinedload"]).joinedload(User.identities))
+        .options(joinedload(User.identities))
     ).unique().scalar_one_or_none()
     return user
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Generator
 
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.orm import Session as DbSession, joinedload
+from sqlalchemy.orm import Session as DbSession
 
 from devdeploy_api.auth_service import get_user_by_session_token
 from devdeploy_api.config import Settings, get_settings
@@ -33,9 +33,6 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    # Ensure identities are loaded for /me providers list
-    db.refresh(user, attribute_names=["identities"])
-    _ = user.identities
     return user
 
 
@@ -45,8 +42,4 @@ def get_optional_user(
     settings: Settings = Depends(get_settings),
 ) -> User | None:
     token = request.cookies.get(settings.session_cookie_name)
-    user = get_user_by_session_token(db, token)
-    if user is None:
-        return None
-    db.refresh(user, attribute_names=["identities"])
-    return user
+    return get_user_by_session_token(db, token)
