@@ -6,6 +6,8 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     String,
@@ -168,9 +170,15 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(80), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Milestone 2 stubs — GitHub attach / deploy target
+    github_installation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("github_installations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    github_repo_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     github_repo_full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     default_branch: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    deploy_branch: Mapped[str | None] = mapped_column(String(200), nullable=True)
     dockerfile_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -184,3 +192,92 @@ class Project(Base):
 
     organization: Mapped[Organization] = relationship(back_populates="projects")
     owner: Mapped[User] = relationship()
+    github_installation: Mapped[GitHubInstallation | None] = relationship(
+        "GitHubInstallation", back_populates="projects"
+    )
+    deployments: Mapped[list[DeploymentJob]] = relationship(
+        "DeploymentJob", back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+class GitHubInstallation(Base):
+    """GitHub App installation linked to a DevDeploy org/user."""
+
+    __tablename__ = "github_installations"
+    __table_args__ = (
+        UniqueConstraint("installation_id", name="uq_github_installation_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    installation_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    account_login: Mapped[str] = mapped_column(String(255), nullable=False)
+    account_type: Mapped[str] = mapped_column(String(32), nullable=False, default="User")
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    installed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    is_mock: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    projects: Mapped[list[Project]] = relationship(back_populates="github_installation")
+
+
+class DeploymentJob(Base):
+    """Queued deployment record (build/deploy engines arrive in Milestone 3+)."""
+
+    __tablename__ = "deployment_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    trigger: Mapped[str] = mapped_column(String(32), nullable=False)
+    git_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    github_delivery_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    project: Mapped[Project] = relationship(back_populates="deployments")
+
+
+class WebhookDelivery(Base):
+    """Dedupe store for GitHub webhook delivery IDs."""
+
+    __tablename__ = "webhook_deliveries"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    delivery_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    event: Mapped[str] = mapped_column(String(64), nullable=False)
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

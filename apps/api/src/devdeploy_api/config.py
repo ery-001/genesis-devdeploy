@@ -45,8 +45,27 @@ class Settings(BaseSettings):
     microsoft_client_id: str = ""
     microsoft_client_secret: str = ""
 
-    # GitHub App (repo install) — separate from user sign-in; Milestone 2+
+    # GitHub App (repo authorization) — separate from user sign-in
+    # When credentials are missing, github_mock_mode stays on for local demos.
     github_app_id: str = ""
+    github_app_client_id: str = ""
+    github_app_client_secret: str = ""
+    github_app_private_key: str = ""  # PEM contents or path via GITHUB_APP_PRIVATE_KEY_PATH
+    github_app_private_key_path: str = ""
+    github_app_webhook_secret: str = "devdeploy-local-webhook-secret"
+    github_app_slug: str = "devdeploy-local"
+    github_mock_mode: bool = True
+
+    @property
+    def github_app_configured(self) -> bool:
+        return bool(
+            self.github_app_id
+            and (self.github_app_private_key or self.github_app_private_key_path)
+        )
+
+    @property
+    def effective_github_mock(self) -> bool:
+        return self.github_mock_mode or not self.github_app_configured
 
 
 @lru_cache

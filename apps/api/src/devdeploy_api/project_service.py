@@ -121,6 +121,7 @@ def create_project(
         slug=project_slug,
         description=description.strip() if description else None,
         default_branch="main",
+        deploy_branch="main",
         dockerfile_path="Dockerfile",
     )
     db.add(project)
@@ -144,6 +145,8 @@ def update_project(
     name: str | None,
     slug: str | None,
     description: str | None,
+    deploy_branch: str | None = None,
+    dockerfile_path: str | None = None,
 ) -> Project:
     project = get_project_for_user(db, user, project_id)
     if name is not None:
@@ -152,6 +155,10 @@ def update_project(
         project.slug = slugify(slug)
     if description is not None:
         project.description = description.strip() or None
+    if deploy_branch is not None:
+        project.deploy_branch = deploy_branch.strip() or None
+    if dockerfile_path is not None:
+        project.dockerfile_path = dockerfile_path.strip() or None
     try:
         db.commit()
     except IntegrityError as exc:

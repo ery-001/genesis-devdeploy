@@ -123,9 +123,49 @@ export type Project = {
   name: string;
   slug: string;
   description: string | null;
+  github_installation_id: string | null;
+  github_repo_id: number | null;
   github_repo_full_name: string | null;
   default_branch: string | null;
+  deploy_branch: string | null;
   dockerfile_path: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GitHubConfig = {
+  mock_mode: boolean;
+  app_configured: boolean;
+  app_slug: string;
+  install_url: string | null;
+};
+
+export type GitHubInstallation = {
+  id: string;
+  installation_id: number;
+  account_login: string;
+  account_type: string;
+  is_mock: boolean;
+  organization_id: string | null;
+};
+
+export type GitHubRepo = {
+  id: number;
+  full_name: string;
+  name: string;
+  private: boolean;
+  default_branch: string;
+};
+
+export type DeploymentJob = {
+  id: string;
+  project_id: string;
+  status: string;
+  trigger: string;
+  git_ref: string | null;
+  commit_sha: string | null;
+  github_delivery_id: string | null;
+  message: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -149,9 +189,56 @@ export function createProject(body: {
   });
 }
 
+export function deleteProject(id: string) {
+  return api<void>(`/api/v1/projects/${id}`, { method: "DELETE" });
+}
+
+export function fetchGitHubConfig() {
+  return api<GitHubConfig>("/api/v1/github/config");
+}
+
+export function listGitHubInstallations() {
+  return api<GitHubInstallation[]>("/api/v1/github/installations");
+}
+
+export function createMockGitHubInstallation() {
+  return api<GitHubInstallation>("/api/v1/github/installations/mock", {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export function listGitHubRepos(installationId: string) {
+  return api<GitHubRepo[]>(
+    `/api/v1/github/installations/${installationId}/repos`,
+  );
+}
+
+export function attachGitHubRepo(
+  projectId: string,
+  body: {
+    installation_id: string;
+    repo_id: number;
+    full_name: string;
+    default_branch?: string;
+    deploy_branch?: string;
+  },
+) {
+  return api<Project>(`/api/v1/projects/${projectId}/github`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function updateProject(
   id: string,
-  body: { name?: string; slug?: string; description?: string },
+  body: {
+    name?: string;
+    slug?: string;
+    description?: string;
+    deploy_branch?: string;
+    dockerfile_path?: string;
+  },
 ) {
   return api<Project>(`/api/v1/projects/${id}`, {
     method: "PATCH",
@@ -159,6 +246,13 @@ export function updateProject(
   });
 }
 
-export function deleteProject(id: string) {
-  return api<void>(`/api/v1/projects/${id}`, { method: "DELETE" });
+export function deployProject(projectId: string) {
+  return api<DeploymentJob>(`/api/v1/projects/${projectId}/deploy`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export function listDeployments(projectId: string) {
+  return api<DeploymentJob[]>(`/api/v1/projects/${projectId}/deployments`);
 }

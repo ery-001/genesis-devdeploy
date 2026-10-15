@@ -71,6 +71,8 @@ class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     slug: str | None = Field(default=None, min_length=1, max_length=80)
     description: str | None = Field(default=None, max_length=4000)
+    deploy_branch: str | None = Field(default=None, min_length=1, max_length=200)
+    dockerfile_path: str | None = Field(default=None, max_length=255)
 
 
 class ProjectOut(BaseModel):
@@ -80,9 +82,61 @@ class ProjectOut(BaseModel):
     name: str
     slug: str
     description: str | None = None
+    github_installation_id: UUID | None = None
+    github_repo_id: int | None = None
     github_repo_full_name: str | None = None
     default_branch: str | None = None
+    deploy_branch: str | None = None
     dockerfile_path: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GitHubConfigOut(BaseModel):
+    mock_mode: bool
+    app_configured: bool
+    app_slug: str
+    install_url: str | None = None
+
+
+class GitHubInstallationOut(BaseModel):
+    id: UUID
+    installation_id: int
+    account_login: str
+    account_type: str
+    is_mock: bool
+    organization_id: UUID | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class GitHubRepoOut(BaseModel):
+    id: int
+    full_name: str
+    name: str
+    private: bool = False
+    default_branch: str = "main"
+
+
+class AttachRepoRequest(BaseModel):
+    installation_id: UUID
+    repo_id: int
+    full_name: str = Field(min_length=1, max_length=255)
+    default_branch: str | None = Field(default=None, max_length=200)
+    deploy_branch: str | None = Field(default=None, max_length=200)
+
+
+class DeploymentJobOut(BaseModel):
+    id: UUID
+    project_id: UUID
+    status: str
+    trigger: str
+    git_ref: str | None = None
+    commit_sha: str | None = None
+    github_delivery_id: str | None = None
+    message: str | None = None
     created_at: datetime
     updated_at: datetime
 
