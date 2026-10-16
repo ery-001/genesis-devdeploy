@@ -41,9 +41,14 @@ async def github_webhook(
         job = github_service.handle_push_event(db, payload, x_github_delivery)
         if job:
             job_id = str(job.id)
+    elif event == "pull_request":
+        job = github_service.handle_pull_request_event(db, payload, x_github_delivery)
+        if job:
+            job_id = str(job.id)
     elif event == "installation":
         # Installation create/delete recorded later when real App is wired.
         pass
+    # Jobs are processed by `make worker` (Redis list). Keep webhook fast for GitHub.
 
     return {
         "ok": True,

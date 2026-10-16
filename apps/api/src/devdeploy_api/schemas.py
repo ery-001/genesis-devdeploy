@@ -178,6 +178,7 @@ class DeploymentJobOut(BaseModel):
     public_url: str | None = None
     simulate_failure: bool = False
     environment_name: str = "development"
+    runtime_slug: str | None = None
     cancelled_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
@@ -411,6 +412,7 @@ class PreviewOut(BaseModel):
     status: str
     preview_url: str | None = None
     message: str | None = None
+    deployment_job_id: UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

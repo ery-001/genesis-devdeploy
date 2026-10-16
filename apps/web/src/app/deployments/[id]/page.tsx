@@ -10,6 +10,7 @@ import { useRequireUser } from "@/hooks/use-require-user";
 import {
   approveDeployment,
   cancelDeployment,
+  deploymentStreamUrl,
   getDeployment,
   listProjects,
   rejectDeployment,
@@ -63,6 +64,49 @@ function DeploymentDetailInner() {
       cancelled = true;
     };
   }, [params.id, projectHint]);
+
+  // Live log stream once we know the project + job.
+  useEffect(() => {
+    if (!projectId || !params.id) return;
+    const url = deploymentStreamUrl(projectId, params.id);
+    let source: EventSource | null = null;
+    try {
+      source = new EventSource(url, { withCredentials: true });
+    } catch {
+      return;
+    }
+    source.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data) as Partial<DeploymentJob> & {
+          build_logs?: string;
+        };
+        setJob((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: data.status || prev.status,
+                message: data.message ?? prev.message,
+                build_logs: data.build_logs ?? prev.build_logs,
+                app_url: data.app_url ?? prev.app_url,
+                public_url: data.public_url ?? prev.public_url,
+              }
+            : prev,
+        );
+      } catch {
+        /* ignore malformed frames */
+      }
+    };
+    source.addEventListener("done", () => {
+      source?.close();
+    });
+    source.onerror = () => {
+      // Fall back to manual refresh; don't spin reconnect forever on auth errors.
+      source?.close();
+    };
+    return () => {
+      source?.close();
+    };
+  }, [projectId, params.id]);
 
   if (authLoading || !user) {
     return (
@@ -207,10 +251,10 @@ function DeploymentDetailInner() {
 
             <section className="space-y-2 border border-dashed border-border bg-white/30 p-6">
               <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                Build logs
+                Build logs {active ? "· live" : ""}
               </p>
               <pre className="max-h-[28rem] overflow-auto font-mono text-[11px] leading-relaxed text-ink">
-                {job.build_logs || "No logs yet."}
+                {job.build_logs || "No logs yet — stream opens when the job starts."}
               </pre>
             </section>
           </>

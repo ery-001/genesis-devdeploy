@@ -2,30 +2,71 @@
 /**
  * Single-hostname reverse proxy for shareable DevDeploy demos.
  *
- *   /api/*  → API (default http://127.0.0.1:8741)
- *   /*      → Web (default http://127.0.0.1:43127)
+ *   /api/*           → API (default http://127.0.0.1:8741)
+ *   /apps/{slug}/*   → project port-forward (from .demo-tunnel/app-routes.json)
+ *   /*               → Web (default http://127.0.0.1:43127)
  *
  * Point one cloudflared quick tunnel at this proxy so session cookies
- * stay first-party (SameSite=Lax) on the public hostname.
+ * stay first-party (SameSite=Lax) on the public hostname, and project
+ * Share URLs stay stable under /apps/{slug}/.
  */
+import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { URL } from "node:url";
 
 const PROXY_PORT = Number(process.env.DEMO_PROXY_PORT || 18080);
 const API_TARGET = process.env.DEMO_API_TARGET || "http://127.0.0.1:8741";
 const WEB_TARGET = process.env.DEMO_WEB_TARGET || "http://127.0.0.1:43127";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROUTES_PATH =
+  process.env.DEVDEPLOY_APP_ROUTES_PATH ||
+  path.join(__dirname, "..", ".demo-tunnel", "app-routes.json");
 
-function targetFor(pathname) {
-  return pathname === "/api" || pathname.startsWith("/api/")
-    ? API_TARGET
-    : WEB_TARGET;
+function loadAppRoutes() {
+  try {
+    const raw = fs.readFileSync(ROUTES_PATH, "utf8");
+    const data = JSON.parse(raw);
+    const out = {};
+    if (data && typeof data === "object") {
+      for (const [slug, port] of Object.entries(data)) {
+        const n = Number(port);
+        if (Number.isFinite(n) && n > 0) out[slug] = n;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function resolveTarget(pathname) {
+  const appMatch = pathname.match(/^\/apps\/([^/]+)(\/.*)?$/);
+  if (appMatch) {
+    const slug = decodeURIComponent(appMatch[1]);
+    const rest = appMatch[2] || "/";
+    const routes = loadAppRoutes();
+    const port = routes[slug];
+    if (!port) {
+      return { error: 404, message: `No app route for slug "${slug}". Deploy/restore first.` };
+    }
+    return {
+      base: `http://127.0.0.1:${port}`,
+      path: rest,
+      label: `app:${slug}`,
+    };
+  }
+  if (pathname === "/api" || pathname.startsWith("/api/")) {
+    return { base: API_TARGET, path: pathname, label: "api" };
+  }
+  return { base: WEB_TARGET, path: pathname, label: "web" };
 }
 
 function forwardHeaders(req) {
   const headers = { ...req.headers };
   const host = req.headers.host || `127.0.0.1:${PROXY_PORT}`;
-  // Upstream sees its own Host; Cloudflare TLS is terminated before us.
   delete headers.host;
   headers["x-forwarded-host"] = host;
   headers["x-forwarded-proto"] = "https";
@@ -40,8 +81,13 @@ function forwardHeaders(req) {
 
 function proxyHttp(req, res) {
   const incoming = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-  const base = targetFor(incoming.pathname);
-  const target = new URL(incoming.pathname + incoming.search, base);
+  const resolved = resolveTarget(incoming.pathname);
+  if (resolved.error) {
+    res.writeHead(resolved.error, { "content-type": "text/plain; charset=utf-8" });
+    res.end(resolved.message);
+    return;
+  }
+  const target = new URL(resolved.path + incoming.search, resolved.base);
 
   const proxyReq = http.request(
     {
@@ -65,7 +111,7 @@ function proxyHttp(req, res) {
     if (!res.headersSent) {
       res.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
     }
-    res.end(`Bad gateway (${base}): ${err.message}`);
+    res.end(`Bad gateway (${resolved.label} → ${resolved.base}): ${err.message}`);
   });
 
   req.pipe(proxyReq);
@@ -73,8 +119,12 @@ function proxyHttp(req, res) {
 
 function proxyUpgrade(req, socket, head) {
   const incoming = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-  const base = targetFor(incoming.pathname);
-  const target = new URL(incoming.pathname + incoming.search, base);
+  const resolved = resolveTarget(incoming.pathname);
+  if (resolved.error) {
+    socket.destroy();
+    return;
+  }
+  const target = new URL(resolved.path + incoming.search, resolved.base);
   const port = Number(target.port || 80);
 
   const upstream = net.connect(port, target.hostname, () => {
@@ -107,6 +157,6 @@ server.on("upgrade", proxyUpgrade);
 
 server.listen(PROXY_PORT, "127.0.0.1", () => {
   console.log(
-    `[demo-proxy] http://127.0.0.1:${PROXY_PORT}  (api=${API_TARGET}  web=${WEB_TARGET})`,
+    `[demo-proxy] http://127.0.0.1:${PROXY_PORT}  (api=${API_TARGET}  web=${WEB_TARGET}  routes=${ROUTES_PATH})`,
   );
 });

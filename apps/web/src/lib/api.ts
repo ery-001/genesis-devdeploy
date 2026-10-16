@@ -464,6 +464,11 @@ export function getDeployment(projectId: string, jobId: string) {
   );
 }
 
+/** SSE URL for live deployment logs (use with EventSource + credentials). */
+export function deploymentStreamUrl(projectId: string, jobId: string) {
+  return `${getApiUrl()}/api/v1/projects/${projectId}/deployments/${jobId}/stream`;
+}
+
 export function listReleases(projectId: string) {
   return api<Release[]>(`/api/v1/projects/${projectId}/releases`);
 }

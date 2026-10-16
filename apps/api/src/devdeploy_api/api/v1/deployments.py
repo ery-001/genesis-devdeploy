@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import time
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
@@ -15,6 +18,7 @@ from devdeploy_api import github_service, k8s_engine, pipeline
 from devdeploy_api.access_restore import restore_project_access
 from devdeploy_api.audit import write_audit
 from devdeploy_api.config import get_settings
+from devdeploy_api.db import SessionLocal
 from devdeploy_api.deps import get_current_user, get_db
 from devdeploy_api.models import DeploymentApproval, DeploymentJob, Release, User
 from devdeploy_api.project_service import get_project_for_user
@@ -33,6 +37,8 @@ from devdeploy_api.schemas import (
 
 router = APIRouter(tags=["deployments"])
 
+_TERMINAL = frozenset({"succeeded", "failed", "cancelled", "rolled_back"})
+
 
 @router.get("/projects/{project_id}/deployments/{job_id}", response_model=DeploymentJobOut)
 def get_deployment(
@@ -46,6 +52,64 @@ def get_deployment(
     if job is None or job.project_id != project_id:
         raise HTTPException(status_code=404, detail="Deployment not found")
     return DeploymentJobOut.model_validate(job)
+
+
+@router.get("/projects/{project_id}/deployments/{job_id}/stream")
+async def stream_deployment_logs(
+    project_id: UUID,
+    job_id: UUID,
+    request: Request,
+    db: DbSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """SSE stream of build_logs + status until the job reaches a terminal state."""
+    get_project_for_user(db, user, project_id)
+    job = db.get(DeploymentJob, job_id)
+    if job is None or job.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+
+    async def event_gen():
+        last_len = -1
+        last_status = None
+        # Use a fresh session inside the generator (request session closes after return).
+        while True:
+            if await request.is_disconnected():
+                break
+            session = SessionLocal()
+            try:
+                row = session.get(DeploymentJob, job_id)
+                if row is None:
+                    yield f"event: error\ndata: {json.dumps({'detail': 'gone'})}\n\n"
+                    break
+                logs = row.build_logs or ""
+                status = row.status
+                if len(logs) != last_len or status != last_status:
+                    payload = {
+                        "status": status,
+                        "message": row.message,
+                        "build_logs": logs,
+                        "app_url": row.app_url,
+                        "public_url": row.public_url,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+                    last_len = len(logs)
+                    last_status = status
+                if status in _TERMINAL:
+                    yield f"event: done\ndata: {json.dumps({'status': status})}\n\n"
+                    break
+            finally:
+                session.close()
+            await asyncio.sleep(0.6)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post(

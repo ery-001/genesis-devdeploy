@@ -17,6 +17,7 @@ from devdeploy_api.db import SessionLocal
 from devdeploy_api.models import (
     DeploymentJob,
     K8sResourceIntent,
+    PreviewEnvironment,
     Project,
     ProjectEnvironment,
     ProjectVariable,
@@ -236,10 +237,11 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
         )
         env_vars = _load_env_vars(db, project.id, job.environment_name)
 
+        runtime_slug = (job.runtime_slug or project.slug).strip() or project.slug
         try:
             deploy = k8s_engine.deploy_to_cluster(
                 settings,
-                project_slug=project.slug,
+                project_slug=runtime_slug,
                 image_tag=job.image_tag or build.image_tag,
                 image_digest=job.image_digest or build.digest,
                 container_port=project.container_port,
@@ -314,6 +316,18 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
             message=ok_msg,
         ):
             _append_log(job, note)
+
+        # Sync PR preview rows when this job is a preview deploy.
+        if job.trigger in {"webhook_pr", "preview"} or job.runtime_slug:
+            preview = db.execute(
+                select(PreviewEnvironment)
+                .where(PreviewEnvironment.deployment_job_id == job.id)
+                .limit(1)
+            ).scalar_one_or_none()
+            if preview is not None:
+                preview.status = "ready"
+                preview.preview_url = deploy.public_url or deploy.app_url
+                preview.message = ok_msg
         db.commit()
         return job
     finally:

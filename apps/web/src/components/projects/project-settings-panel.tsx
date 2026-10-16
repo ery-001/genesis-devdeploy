@@ -291,7 +291,7 @@ replicas: ${project.replicas || 1}
 
       <section className="space-y-3 border border-dashed border-border bg-white/30 p-6">
         <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground">
-          Preview environments (stub)
+          Preview environments
         </p>
         <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-2">
@@ -307,7 +307,7 @@ replicas: ${project.replicas || 1}
             onClick={async () => {
               const row = await createPreview(project.id, Number(prNumber) || 1);
               setPreviews((p) => [row, ...p]);
-              setInfo("Preview stub created");
+              setInfo(`Preview ${row.status}: ${row.preview_url || "deploying…"}`);
             }}
           >
             Create preview

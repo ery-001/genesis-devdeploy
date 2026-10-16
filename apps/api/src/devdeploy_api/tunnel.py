@@ -130,11 +130,37 @@ def start_public_tunnel(
         logs.append("PUBLIC_TUNNEL_ENABLED=false — skipping public tunnel")
         return TunnelResult(public_url=None, provider="none", logs=logs)
 
-    provider = (settings.public_tunnel_provider or "cloudflared").strip().lower()
     local = local_url.rstrip("/")
     if not local.startswith("http"):
         local = f"http://{local}"
 
+    # Stable share: register /apps/{slug} on the shareable-demo proxy (same public host).
+    from devdeploy_api.app_routes import (
+        register_app_route,
+        stable_share_url,
+        use_proxy_share,
+    )
+
+    if use_proxy_share(settings):
+        try:
+            port = int(local.rsplit(":", 1)[-1].rstrip("/"))
+        except ValueError:
+            port = 0
+        if port > 0:
+            _stop_tunnel(slug)  # drop any leftover per-app quick tunnel
+            path = register_app_route(slug, port)
+            url = stable_share_url(settings, slug)
+            logs.append(
+                f"Stable share via demo-proxy: {url} → 127.0.0.1:{port} ({path})"
+            )
+            logs.append(
+                "Share URL stays on the DevDeploy public hostname; "
+                "survives API restart after access-restore + demo-proxy/tunnel."
+            )
+            return TunnelResult(public_url=url, provider="proxy", logs=logs)
+        logs.append("Could not parse local port for proxy share — falling back to quick tunnel")
+
+    provider = (settings.public_tunnel_provider or "cloudflared").strip().lower()
     _stop_tunnel(slug)
     log_path = Path(tempfile.gettempdir()) / f"devdeploy-tunnel-{slug}.log"
 
