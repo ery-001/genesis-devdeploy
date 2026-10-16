@@ -282,6 +282,8 @@ class DeploymentJob(Base):
     environment_name: Mapped[str] = mapped_column(
         String(64), nullable=False, default="development"
     )
+    # Optional k8s/workload slug override (PR previews use "{slug}-pr-{n}").
+    runtime_slug: Mapped[str | None] = mapped_column(String(80), nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -551,7 +553,7 @@ class ApiKey(Base):
 
 
 class PreviewEnvironment(Base):
-    """PR preview environment stub (V3)."""
+    """PR preview environment (deploys to runtime slug {project}-pr-{n})."""
 
     __tablename__ = "preview_environments"
 
@@ -562,9 +564,14 @@ class PreviewEnvironment(Base):
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     pr_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="stub")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     preview_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deployment_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("deployment_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

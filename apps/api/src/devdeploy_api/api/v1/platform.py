@@ -181,21 +181,34 @@ def create_preview(
     db: DbSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> PreviewOut:
+    from devdeploy_api import github_service, pipeline
+
     project = get_project_for_user(db, user, project_id)
     require_project_role(db, user, project, "developer")
+    runtime = github_service.preview_runtime_slug(project.slug, body.pr_number)
+    job = github_service.enqueue_deployment(
+        db,
+        project,
+        trigger="preview",
+        git_ref=project.deploy_branch or project.default_branch or "main",
+        message=f"Manual preview for PR #{body.pr_number}",
+        environment_name="preview",
+        runtime_slug=runtime,
+        require_repo=bool(project.github_repo_full_name),
+    )
     row = PreviewEnvironment(
         project_id=project_id,
         pr_number=body.pr_number,
-        status="stub",
-        preview_url=f"https://pr-{body.pr_number}-{project.slug}.preview.devdeploy.local",
-        message=(
-            "Preview environment stub recorded. Full PR previews need GitHub Checks + "
-            "ephemeral namespaces (enable when webhook PR events are wired)."
-        ),
+        status="deploying",
+        message=f"Deploying preview runtime {runtime}",
+        deployment_job_id=job.id,
     )
     db.add(row)
     db.commit()
     db.refresh(row)
+    if job.status == "queued":
+        pipeline.drain_queue(step_delay=0.05)
+        db.refresh(row)
     return PreviewOut.model_validate(row)
 
 

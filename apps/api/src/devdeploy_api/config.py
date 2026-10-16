@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     # Shareable HTTPS tunnel after local port-forward (cloudflared quick tunnel).
     public_tunnel_enabled: bool = True
     public_tunnel_provider: str = "cloudflared"  # cloudflared | ngrok
+    # auto | proxy | quick — proxy keeps stable /apps/{slug}/ on API_PUBLIC_URL
+    public_share_mode: str = "auto"
     ngrok_authtoken: str = ""
 
     # Encrypt project secrets at rest (falls back to session_secret when empty).

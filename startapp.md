@@ -107,10 +107,10 @@ To let someone else open one HTTPS link (UI + API on the same hostname so cookie
 6. **Metrics** link → charts + quotas + scans  
 7. **Variables** (nav or `/variables`) → add a secret (preview is masked)  
 8. Paste `examples/sample-fastapi-app/devdeploy.yaml` → Validate / Apply  
-9. Webhook auto-deploy: set GitHub App webhook to  
-   `{API_PUBLIC_URL}/api/v1/webhooks/github`  
-   (use shareable-demo / cloudflared HTTPS when GitHub cannot reach localhost; HMAC secret = `GITHUB_APP_WEBHOOK_SECRET`)  
-10. **Settings**: invite member, API key → `apps/cli` `devdeploy login` / `deploy`
+9. Webhook auto-deploy + PR previews: see **`docs/webhook-auto-deploy.md`**  
+   (webhook URL `{API_PUBLIC_URL}/api/v1/webhooks/github`; keep `make worker` running)  
+10. **Settings**: invite member, API key → `apps/cli` `devdeploy login` / `deploy`  
+11. Stable Share URLs use `{API_PUBLIC_URL}/apps/{slug}/` when shareable-demo is up (`PUBLIC_SHARE_MODE=auto`)
 
 ## Notes
 

@@ -57,6 +57,16 @@ OAuth start picks the callback from the request host (`X-Forwarded-Host` via the
 
 Web calls on the public hostname use same-origin `/api/v1/...`; the proxy forwards them to the API **keeping the path**.
 
+### Stable project Share URLs
+
+With `PUBLIC_SHARE_MODE=auto` (default), deployed apps get:
+
+```
+https://<public>/apps/<project-slug>/
+```
+
+`demo-proxy` reads `.demo-tunnel/app-routes.json` (written by the API) and forwards to the local port-forward. After API restart, access-restore re-registers routes — **the Share link does not change**.
+
 ## GitHub App callbacks (required for login)
 
 Register **both** User authorization callback URLs on the GitHub App:

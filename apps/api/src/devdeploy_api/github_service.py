@@ -254,10 +254,12 @@ def enqueue_deployment(
     simulate_failure: bool = False,
     environment_name: str = "development",
     skip_queue: bool = False,
+    runtime_slug: str | None = None,
+    require_repo: bool = True,
 ) -> DeploymentJob:
     from devdeploy_api.models import DeploymentApproval, ProjectEnvironment
 
-    if not project.github_repo_full_name:
+    if require_repo and not project.github_repo_full_name:
         raise HTTPException(
             status_code=400,
             detail="Project has no GitHub repository attached",
@@ -290,6 +292,7 @@ def enqueue_deployment(
         ),
         simulate_failure=simulate_failure,
         environment_name=env_name,
+        runtime_slug=(runtime_slug or "").strip() or None,
     )
     db.add(job)
     db.flush()
@@ -402,6 +405,77 @@ def handle_push_event(db: DbSession, payload: dict[str, Any], delivery_id: str) 
             message=f"Push to {branch}",
             environment_name="development",
         )
+    return created
+
+
+def preview_runtime_slug(project_slug: str, pr_number: int) -> str:
+    raw = f"{project_slug}-pr-{pr_number}"
+    # Keep k8s DNS-safe and within namespace budget.
+    cleaned = "".join(c if c.isalnum() or c == "-" else "-" for c in raw.lower())
+    return cleaned[:50].strip("-") or f"pr-{pr_number}"
+
+
+def handle_pull_request_event(
+    db: DbSession, payload: dict[str, Any], delivery_id: str
+) -> DeploymentJob | None:
+    """Deploy (or refresh) a PR preview environment for attached projects."""
+    from devdeploy_api.models import PreviewEnvironment
+
+    action = payload.get("action") or ""
+    if action not in {"opened", "reopened", "synchronize", "ready_for_review"}:
+        return None
+    pr = payload.get("pull_request") or {}
+    repo = payload.get("repository") or {}
+    full_name = repo.get("full_name")
+    pr_number = pr.get("number")
+    if not full_name or not pr_number:
+        return None
+    head_ref = (pr.get("head") or {}).get("ref") or f"pr-{pr_number}"
+    head_sha = (pr.get("head") or {}).get("sha")
+
+    projects = list(
+        db.execute(
+            select(Project).where(Project.github_repo_full_name == full_name)
+        ).scalars().all()
+    )
+    created: DeploymentJob | None = None
+    for project in projects:
+        if not project.auto_deploy:
+            continue
+        runtime = preview_runtime_slug(project.slug, int(pr_number))
+        job = enqueue_deployment(
+            db,
+            project,
+            trigger="webhook_pr",
+            git_ref=head_ref,
+            commit_sha=head_sha,
+            delivery_id=delivery_id,
+            message=f"PR #{pr_number} preview ({action})",
+            environment_name="preview",
+            runtime_slug=runtime,
+        )
+        row = db.execute(
+            select(PreviewEnvironment)
+            .where(PreviewEnvironment.project_id == project.id)
+            .where(PreviewEnvironment.pr_number == int(pr_number))
+            .order_by(PreviewEnvironment.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if row is None:
+            row = PreviewEnvironment(
+                project_id=project.id,
+                pr_number=int(pr_number),
+                status="deploying",
+                message=f"Deploying preview for PR #{pr_number}",
+                deployment_job_id=job.id,
+            )
+            db.add(row)
+        else:
+            row.status = "deploying"
+            row.message = f"Refreshing preview for PR #{pr_number} ({action})"
+            row.deployment_job_id = job.id
+        db.commit()
+        created = job
     return created
 
 
