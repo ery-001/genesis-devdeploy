@@ -103,7 +103,7 @@ curl -sS -X POST http://127.0.0.1:8741/api/v1/webhooks/github \
 6. Set `GITHUB_APP_SLUG` to the app slug; set `GITHUB_MOCK_MODE=false`
 7. Install the App on orgs/repos you trust, then attach repos from the project UI
 
-Real installation-token repo listing is stubbed until credentials are present; mock mode covers the full attach → queue path locally.
+With App credentials and `GITHUB_MOCK_MODE=false`, call `POST /api/v1/github/installations/sync` then list repos via installation tokens (App JWT). Mock mode still covers the full attach → queue path locally without an App.
 
 ## Health checks
 
@@ -114,13 +114,13 @@ Real installation-token repo listing is stubbed until credentials are present; m
 
 API docs: [http://127.0.0.1:8741/docs](http://127.0.0.1:8741/docs)
 
-## Pipeline (Milestones 3–6)
+## Pipeline (Milestones 3–6 + real local infra)
 
-Default path is **mock-first** (no Docker / kind / AWS required):
+Prefer **real Docker/BuildKit + kind** when available (`BUILD_MOCK_MODE=false`, `K8S_MOCK_MODE=false`). Set either flag to `true` for offline/mock demos. AWS stays mocked by default. Details: [`docs/real-infra.md`](docs/real-infra.md).
 
 ```bash
 make migrate
-make api          # also drains the queue synchronously on Deploy for demos
+make api          # drains the queue synchronously on Deploy for demos
 # optional background worker:
 make worker
 make web
@@ -130,9 +130,10 @@ make test
 Lifecycle: `queued → building → publishing → deploying → succeeded|failed`.
 
 - Failed builds **retain** the last healthy release.
-- **Rollback** restores the previous release.
+- **Rollback** restores the previous release (and `kubectl set image` when kind is live).
 - Build logs appear on the project page; metrics/alerts are mock API stubs (`monitoring/` has Prom/Grafana skeletons).
 - Terraform under `infrastructure/terraform/` — keep `AWS_MOCK_MODE=true` unless you intentionally `apply` (see that README for cost notes).
+- Sample deploy target: `examples/sample-fastapi-app` (`/`, `/health`, `/version`, Dockerfile, tests).
 
 ### Five demos
 1. Deploy → succeeded with digest + app URL  
@@ -143,7 +144,7 @@ Lifecycle: `queued → building → publishing → deploying → succeeded|faile
 
 ## Current milestone
 
-**Milestones 1–6 foundation:** auth, projects, GitHub App (mock), build/deploy pipeline (mock), release/rollback, AWS/Terraform stubs, observability stubs + tests.
+**Real local infra:** Docker builds + kind Deployment/Service/Ingress when tools are present; GitHub App mock by default (real JWT/installation-token path when configured); AWS Terraform plan-ready without paid apply.
 
 ## License
 

@@ -56,13 +56,23 @@ class Settings(BaseSettings):
     github_app_slug: str = "devdeploy-local"
     github_mock_mode: bool = True
 
-    # Milestone 3–5 runtime adapters (mock by default)
-    build_mock_mode: bool = True
-    k8s_mock_mode: bool = True
-    aws_mock_mode: bool = True
+    # Milestone 3–5 runtime adapters
+    # Prefer real Docker/kind when available; set *_MOCK_MODE=true to force mocks.
+    build_mock_mode: bool = False
+    k8s_mock_mode: bool = False
+    aws_mock_mode: bool = True  # never spend AWS $ unless explicitly disabled
     aws_region: str = "us-east-1"
     ecr_registry: str = ""
     eks_cluster_name: str = ""
+
+    # Local image registry + kind
+    local_registry: str = "localhost:5001"
+    kind_cluster_name: str = "devdeploy"
+    k8s_context: str = "kind-devdeploy"
+    k8s_ingress_host_port: int = 8088
+    k8s_node_port: int = 30080
+    k8s_rollout_timeout_seconds: int = 120
+    workload_container_port: int = 8000
 
     @property
     def github_app_configured(self) -> bool:

@@ -1,17 +1,15 @@
-"""Deployment pipeline: build → publish → deploy (mock-first)."""
+"""Deployment pipeline: build → publish → deploy (real Docker/kind when enabled)."""
 
 from __future__ import annotations
 
-import hashlib
 import json
-import secrets
 import time
 import uuid
-from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
+from devdeploy_api import build_engine, k8s_engine
 from devdeploy_api.config import get_settings
 from devdeploy_api.db import SessionLocal
 from devdeploy_api.models import DeploymentJob, K8sResourceIntent, Project, Release
@@ -29,6 +27,8 @@ LIFECYCLE = (
 
 
 def _append_log(job: DeploymentJob, line: str) -> None:
+    from datetime import UTC, datetime
+
     stamp = datetime.now(UTC).strftime("%H:%M:%S")
     entry = f"[{stamp}] {line}"
     job.build_logs = f"{job.build_logs}\n{entry}" if job.build_logs else entry
@@ -40,11 +40,6 @@ def _set_status(db: DbSession, job: DeploymentJob, status: str, message: str) ->
     _append_log(job, message)
     db.commit()
     db.refresh(job)
-
-
-def _mock_digest(project: Project, job: DeploymentJob) -> str:
-    raw = f"{project.slug}:{job.id}:{job.git_ref}:{secrets.token_hex(8)}"
-    return "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
 
 
 def _current_release(db: DbSession, project_id: uuid.UUID) -> Release | None:
@@ -70,16 +65,18 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
 
         prior = _current_release(db, project.id)
 
-        _set_status(db, job, "building", "Starting isolated build (mock BuildKit)")
+        mode = "mock" if build_engine.effective_build_mock(settings) else "real"
+        _set_status(
+            db,
+            job,
+            "building",
+            f"Starting isolated build ({mode} BuildKit)",
+        )
         time.sleep(step_delay)
-        _append_log(job, f"Dockerfile: {project.dockerfile_path or 'Dockerfile'}")
-        _append_log(job, f"Context: repo={project.github_repo_full_name} ref={job.git_ref}")
-        db.commit()
 
         if job.simulate_failure:
             time.sleep(step_delay)
             _set_status(db, job, "failed", "Build failed (simulated)")
-            # Do not touch prior healthy release
             if prior:
                 _append_log(
                     job,
@@ -88,68 +85,109 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
                 db.commit()
             return job
 
-        time.sleep(step_delay)
-        _append_log(job, "Build completed successfully")
+        try:
+            build = build_engine.build_and_publish(
+                settings,
+                project_slug=project.slug,
+                job_id=str(job.id),
+                git_ref=job.git_ref or "main",
+                repo_full_name=project.github_repo_full_name,
+                dockerfile_path=project.dockerfile_path or "Dockerfile",
+            )
+        except Exception as exc:  # noqa: BLE001 — surface in job logs
+            _set_status(db, job, "failed", f"Build failed: {exc}")
+            if prior:
+                _append_log(
+                    job,
+                    f"Prior healthy release retained: {prior.image_digest[:19]}…",
+                )
+                db.commit()
+            return job
+
+        for line in build.logs:
+            _append_log(job, line)
         db.commit()
 
         _set_status(db, job, "publishing", "Publishing image digest")
         time.sleep(step_delay)
-        digest = _mock_digest(project, job)
-        tag = f"devdeploy/{project.slug}:{str(job.id)[:8]}"
-        if settings.aws_mock_mode:
-            _append_log(job, f"Mock ECR push → {tag}@{digest[:19]}…")
-        else:
-            _append_log(job, f"ECR push configured (real path) → {tag}")
-        job.image_digest = digest
-        job.image_tag = tag
+        job.image_digest = build.digest
+        job.image_tag = build.image_tag
         db.commit()
+
+        # Load local tag into kind so imagePullPolicy: IfNotPresent works offline
+        if not k8s_engine.effective_k8s_mock(settings) and not build.mocked:
+            try:
+                local_short = f"devdeploy/{project.slug}:{str(job.id)[:8]}"
+                load_lines = build_engine.kind_load_image(
+                    local_short, settings.kind_cluster_name
+                )
+                for line in load_lines:
+                    _append_log(job, line)
+                # Prefer the short tag for the Deployment (already on the node)
+                job.image_tag = local_short
+                db.commit()
+            except Exception as exc:  # noqa: BLE001
+                _append_log(job, f"kind load warning: {exc}")
+                db.commit()
 
         _set_status(db, job, "deploying", "Applying workload-plane manifests")
         time.sleep(step_delay)
-        app_url = f"https://{project.slug}.apps.devdeploy.local"
-        namespace = f"dd-{project.slug}"[:63]
-        manifests = [
-            ("Deployment", project.slug, {"image": f"{tag}@{digest}", "replicas": 1}),
-            ("Service", f"{project.slug}-svc", {"port": 80}),
-            ("Ingress", f"{project.slug}-ing", {"host": f"{project.slug}.apps.devdeploy.local"}),
-        ]
-        # Create release first (not current until success)
+
+        try:
+            deploy = k8s_engine.deploy_to_cluster(
+                settings,
+                project_slug=project.slug,
+                image_tag=job.image_tag or build.image_tag,
+                image_digest=job.image_digest or build.digest,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _set_status(db, job, "failed", f"Deploy failed: {exc}")
+            if prior:
+                _append_log(
+                    job,
+                    f"Prior healthy release retained: {prior.image_digest[:19]}…",
+                )
+                db.commit()
+            return job
+
+        for line in deploy.logs:
+            _append_log(job, line)
+
         release = Release(
             project_id=project.id,
             deployment_job_id=job.id,
-            image_digest=digest,
-            image_tag=tag,
-            app_url=app_url,
+            image_digest=job.image_digest,
+            image_tag=job.image_tag,
+            app_url=deploy.app_url,
             status="pending",
             is_current=False,
         )
         db.add(release)
         db.flush()
 
-        for kind, name, body in manifests:
+        for kind, name, body in deploy.manifests:
             db.add(
                 K8sResourceIntent(
                     project_id=project.id,
                     release_id=release.id,
                     kind=kind,
                     name=name,
-                    namespace=namespace,
+                    namespace=deploy.namespace,
                     manifest_json=json.dumps(body),
-                    status="applied-mock" if settings.k8s_mock_mode else "applied",
+                    status=deploy.status,
                 )
             )
-            _append_log(job, f"Applied {kind}/{name} in {namespace}")
+            _append_log(job, f"Applied {kind}/{name} in {deploy.namespace}")
         db.commit()
 
         time.sleep(step_delay)
-        # Promote release; demote prior without deleting it
         if prior:
             prior.is_current = False
             prior.status = "superseded"
         release.is_current = True
         release.status = "healthy"
-        job.app_url = app_url
-        _set_status(db, job, "succeeded", f"Rollout healthy at {app_url}")
+        job.app_url = deploy.app_url
+        _set_status(db, job, "succeeded", f"Rollout healthy at {deploy.app_url}")
         return job
     finally:
         db.close()
@@ -157,6 +195,7 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
 
 def rollback_project(db: DbSession, project_id: uuid.UUID) -> Release:
     """Restore previous healthy/superseded release; keep failed attempts intact."""
+    settings = get_settings()
     current = _current_release(db, project_id)
     if current is None:
         raise ValueError("No current release to roll back from")
@@ -172,6 +211,18 @@ def rollback_project(db: DbSession, project_id: uuid.UUID) -> Release:
     if previous is None:
         raise ValueError("No previous release available")
 
+    project = db.get(Project, project_id)
+    workload_logs: list[str] = []
+    if project and previous.image_tag:
+        try:
+            workload_logs = k8s_engine.rollback_workload(
+                settings,
+                project_slug=project.slug,
+                image_tag=previous.image_tag,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"Workload rollback failed: {exc}") from exc
+
     current.is_current = False
     current.status = "rolled_back"
     previous.is_current = True
@@ -179,7 +230,6 @@ def rollback_project(db: DbSession, project_id: uuid.UUID) -> Release:
     db.commit()
     db.refresh(previous)
 
-    # Record rollback job marker
     job = DeploymentJob(
         project_id=project_id,
         status="rolled_back",
@@ -189,7 +239,9 @@ def rollback_project(db: DbSession, project_id: uuid.UUID) -> Release:
         image_digest=previous.image_digest,
         image_tag=previous.image_tag,
         app_url=previous.app_url,
-        build_logs=f"Rollback to release {previous.id}",
+        build_logs="\n".join(
+            [f"Rollback to release {previous.id}", *workload_logs]
+        ),
     )
     db.add(job)
     db.commit()

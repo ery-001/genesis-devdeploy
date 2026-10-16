@@ -34,3 +34,11 @@ htmlcov/
 
 # Docker
 *.pid
+
+# Terraform
+infrastructure/terraform/.terraform/
+infrastructure/terraform/*.tfstate
+infrastructure/terraform/*.tfstate.*
+infrastructure/terraform/crash.log
+*.tfvars
+!*.tfvars.example
