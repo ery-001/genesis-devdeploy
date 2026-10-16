@@ -10,15 +10,20 @@ import {
   createMockGitHubInstallation,
   deployProject,
   fetchGitHubConfig,
+  fetchProjectMetrics,
   listDeployments,
   listGitHubInstallations,
   listGitHubRepos,
+  listReleases,
+  rollbackProject,
   updateProject,
   type DeploymentJob,
   type GitHubConfig,
   type GitHubInstallation,
   type GitHubRepo,
   type Project,
+  type ProjectMetrics,
+  type Release,
 } from "@/lib/api";
 
 export function GitHubPanel({
@@ -36,14 +41,22 @@ export function GitHubPanel({
     project.deploy_branch || project.default_branch || "main",
   );
   const [deployments, setDeployments] = useState<DeploymentJob[]>([]);
+  const [releases, setReleases] = useState<Release[]>([]);
+  const [metrics, setMetrics] = useState<ProjectMetrics | null>(null);
+  const [selectedJob, setSelectedJob] = useState<DeploymentJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const refreshDeployments = useCallback(() => {
     listDeployments(project.id)
-      .then(setDeployments)
+      .then((jobs) => {
+        setDeployments(jobs);
+        if (jobs[0]) setSelectedJob(jobs[0]);
+      })
       .catch(() => setDeployments([]));
+    listReleases(project.id).then(setReleases).catch(() => setReleases([]));
+    fetchProjectMetrics(project.id).then(setMetrics).catch(() => setMetrics(null));
   }, [project.id]);
 
   const refreshInstallations = useCallback(() => {
@@ -58,7 +71,14 @@ export function GitHubPanel({
   useEffect(() => {
     fetchGitHubConfig()
       .then(setConfig)
-      .catch(() => setConfig({ mock_mode: true, app_configured: false, app_slug: "devdeploy-local", install_url: null }));
+      .catch(() =>
+        setConfig({
+          mock_mode: true,
+          app_configured: false,
+          app_slug: "devdeploy-local",
+          install_url: null,
+        }),
+      );
     refreshInstallations();
     refreshDeployments();
   }, [refreshInstallations, refreshDeployments]);
@@ -128,15 +148,36 @@ export function GitHubPanel({
     }
   }
 
-  async function onDeploy() {
+  async function onDeploy(simulateFailure = false) {
     setBusy(true);
     setError(null);
     try {
-      const job = await deployProject(project.id);
-      setInfo(`Deployment ${job.id.slice(0, 8)}… queued`);
+      const job = await deployProject(project.id, {
+        simulate_failure: simulateFailure,
+      });
+      setInfo(
+        simulateFailure
+          ? `Simulated failure — prior release retained (${job.status})`
+          : `Deployment ${job.status}${job.app_url ? ` · ${job.app_url}` : ""}`,
+      );
+      setSelectedJob(job);
       refreshDeployments();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Deploy failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onRollback() {
+    setBusy(true);
+    setError(null);
+    try {
+      const release = await rollbackProject(project.id);
+      setInfo(`Rolled back to ${release.image_digest.slice(0, 19)}…`);
+      refreshDeployments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Rollback failed");
     } finally {
       setBusy(false);
     }
@@ -171,7 +212,9 @@ export function GitHubPanel({
             </Button>
           ) : config.install_url ? (
             <Button
-              render={<a href={config.install_url} target="_blank" rel="noreferrer" />}
+              render={
+                <a href={config.install_url} target="_blank" rel="noreferrer" />
+              }
               className="h-10 bg-signal text-signal-foreground hover:bg-signal/90"
             >
               Install GitHub App
@@ -272,12 +315,70 @@ export function GitHubPanel({
           </Button>
           <Button
             disabled={busy || !project.github_repo_full_name}
-            onClick={onDeploy}
+            onClick={() => onDeploy(false)}
             className="h-10 bg-signal text-signal-foreground hover:bg-signal/90"
           >
             Deploy
           </Button>
+          <Button
+            variant="outline"
+            disabled={busy || releases.filter((r) => r.is_current || r.status === "superseded").length < 2}
+            onClick={onRollback}
+            className="h-10"
+          >
+            Rollback
+          </Button>
         </div>
+      </section>
+
+      {metrics ? (
+        <section className="grid gap-3 border border-border/70 bg-white/40 p-6 sm:grid-cols-4">
+          <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground sm:col-span-4">
+            Metrics ({metrics.source})
+          </p>
+          <div>
+            <p className="text-xs text-muted-foreground">CPU</p>
+            <p className="font-mono text-lg text-ink">{metrics.cpu_percent}%</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Memory</p>
+            <p className="font-mono text-lg text-ink">{metrics.memory_mib} MiB</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Uptime</p>
+            <p className="font-mono text-lg text-ink">{metrics.uptime_seconds}s</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">RPM</p>
+            <p className="font-mono text-lg text-ink">{metrics.requests_per_minute}</p>
+          </div>
+        </section>
+      ) : null}
+
+      <section className="space-y-3 border border-dashed border-border bg-white/30 p-6">
+        <div className="flex items-center justify-between gap-3">
+          <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground">
+            Releases
+          </p>
+        </div>
+        {releases.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No releases yet.</p>
+        ) : (
+          <ul className="divide-y divide-border/60 border border-border/50">
+            {releases.map((r) => (
+              <li key={r.id} className="px-4 py-3 text-sm">
+                <div className="flex flex-wrap justify-between gap-2">
+                  <span className="font-mono text-xs">{r.image_digest.slice(0, 19)}…</span>
+                  <span className="font-mono text-[11px] uppercase">
+                    {r.is_current ? "current · " : ""}
+                    {r.status}
+                  </span>
+                </div>
+                <p className="text-muted-foreground">{r.app_url ?? "—"}</p>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="space-y-3 border border-dashed border-border bg-white/30 p-6">
@@ -291,30 +392,39 @@ export function GitHubPanel({
         </div>
         {deployments.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No deployment jobs yet. Attach a repo and click Deploy, or push to
-            the deploy branch (webhook).
+            No deployment jobs yet. Attach a repo and click Deploy.
           </p>
         ) : (
           <ul className="divide-y divide-border/60 border border-border/50">
             {deployments.map((job) => (
-              <li key={job.id} className="px-4 py-3 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-mono text-xs text-ink">{job.id.slice(0, 8)}</span>
-                  <span className="rounded bg-ink/5 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-ink">
-                    {job.status}
-                  </span>
-                </div>
-                <p className="mt-1 text-muted-foreground">
-                  {job.trigger} · {job.git_ref ?? "—"}
-                  {job.commit_sha ? ` · ${job.commit_sha.slice(0, 7)}` : ""}
-                </p>
-                {job.message ? (
-                  <p className="mt-0.5 text-xs text-muted-foreground">{job.message}</p>
-                ) : null}
+              <li key={job.id}>
+                <button
+                  type="button"
+                  className="w-full px-4 py-3 text-left text-sm hover:bg-white/50"
+                  onClick={() => setSelectedJob(job)}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-mono text-xs text-ink">
+                      {job.id.slice(0, 8)}
+                    </span>
+                    <span className="rounded bg-ink/5 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-ink">
+                      {job.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-muted-foreground">
+                    {job.trigger} · {job.git_ref ?? "—"}
+                    {job.image_digest ? ` · ${job.image_digest.slice(0, 15)}…` : ""}
+                  </p>
+                </button>
               </li>
             ))}
           </ul>
         )}
+        {selectedJob?.build_logs ? (
+          <pre className="mt-3 max-h-64 overflow-auto rounded border border-border/60 bg-ink/[0.03] p-3 font-mono text-[11px] leading-relaxed text-ink">
+            {selectedJob.build_logs}
+          </pre>
+        ) : null}
       </section>
     </div>
   );

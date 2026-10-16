@@ -1,0 +1,9 @@
+{
+  "title": "DevDeploy workload (starter)",
+  "panels": [
+    { "title": "CPU %", "type": "timeseries", "targets": [{ "expr": "devdeploy_cpu_percent" }] },
+    { "title": "Memory MiB", "type": "timeseries", "targets": [{ "expr": "devdeploy_memory_mib" }] },
+    { "title": "Uptime", "type": "stat", "targets": [{ "expr": "devdeploy_uptime_seconds" }] }
+  ],
+  "tags": ["devdeploy", "milestone-6"]
+}

@@ -166,8 +166,34 @@ export type DeploymentJob = {
   commit_sha: string | null;
   github_delivery_id: string | null;
   message: string | null;
+  build_logs: string | null;
+  image_digest: string | null;
+  image_tag: string | null;
+  app_url: string | null;
+  simulate_failure: boolean;
   created_at: string;
   updated_at: string;
+};
+
+export type Release = {
+  id: string;
+  project_id: string;
+  deployment_job_id: string | null;
+  image_digest: string;
+  image_tag: string | null;
+  app_url: string | null;
+  status: string;
+  is_current: boolean;
+  created_at: string;
+};
+
+export type ProjectMetrics = {
+  project_id: string;
+  cpu_percent: number;
+  memory_mib: number;
+  uptime_seconds: number;
+  requests_per_minute: number;
+  source: string;
 };
 
 export function listProjects() {
@@ -246,13 +272,37 @@ export function updateProject(
   });
 }
 
-export function deployProject(projectId: string) {
+export function deployProject(
+  projectId: string,
+  body: { simulate_failure?: boolean } = {},
+) {
   return api<DeploymentJob>(`/api/v1/projects/${projectId}/deploy`, {
     method: "POST",
-    body: "{}",
+    body: JSON.stringify(body),
   });
 }
 
 export function listDeployments(projectId: string) {
   return api<DeploymentJob[]>(`/api/v1/projects/${projectId}/deployments`);
+}
+
+export function getDeployment(projectId: string, jobId: string) {
+  return api<DeploymentJob>(
+    `/api/v1/projects/${projectId}/deployments/${jobId}`,
+  );
+}
+
+export function listReleases(projectId: string) {
+  return api<Release[]>(`/api/v1/projects/${projectId}/releases`);
+}
+
+export function rollbackProject(projectId: string) {
+  return api<Release>(`/api/v1/projects/${projectId}/rollback`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export function fetchProjectMetrics(projectId: string) {
+  return api<ProjectMetrics>(`/api/v1/projects/${projectId}/metrics`);
 }

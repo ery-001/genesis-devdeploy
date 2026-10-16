@@ -137,7 +137,47 @@ class DeploymentJobOut(BaseModel):
     commit_sha: str | None = None
     github_delivery_id: str | None = None
     message: str | None = None
+    build_logs: str | None = None
+    image_digest: str | None = None
+    image_tag: str | None = None
+    app_url: str | None = None
+    simulate_failure: bool = False
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class DeployRequest(BaseModel):
+    simulate_failure: bool = False
+
+
+class ReleaseOut(BaseModel):
+    id: UUID
+    project_id: UUID
+    deployment_job_id: UUID | None = None
+    image_digest: str
+    image_tag: str | None = None
+    app_url: str | None = None
+    status: str
+    is_current: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class MetricsOut(BaseModel):
+    project_id: UUID
+    cpu_percent: float
+    memory_mib: float
+    uptime_seconds: int
+    requests_per_minute: float
+    source: str = "mock"
+
+
+class AlertOut(BaseModel):
+    id: str
+    severity: str
+    title: str
+    description: str
+    firing: bool
