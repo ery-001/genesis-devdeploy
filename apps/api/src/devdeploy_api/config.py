@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     k8s_rollout_timeout_seconds: int = 120
     workload_container_port: int = 8000
 
+    # Shareable HTTPS tunnel after local port-forward (cloudflared quick tunnel).
+    public_tunnel_enabled: bool = True
+    public_tunnel_provider: str = "cloudflared"  # cloudflared | ngrok
+    ngrok_authtoken: str = ""
+
     @property
     def github_app_configured(self) -> bool:
         return bool(

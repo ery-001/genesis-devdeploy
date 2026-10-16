@@ -166,6 +166,7 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
             image_digest=job.image_digest,
             image_tag=job.image_tag,
             app_url=deploy.app_url,
+            public_url=deploy.public_url,
             status="pending",
             is_current=False,
         )
@@ -194,7 +195,11 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
         release.is_current = True
         release.status = "healthy"
         job.app_url = deploy.app_url
-        _set_status(db, job, "succeeded", f"Rollout healthy at {deploy.app_url}")
+        job.public_url = deploy.public_url
+        ok_msg = f"Rollout healthy at {deploy.app_url}"
+        if deploy.public_url:
+            ok_msg += f" · public {deploy.public_url}"
+        _set_status(db, job, "succeeded", ok_msg)
         return job
     finally:
         db.close()
@@ -246,6 +251,7 @@ def rollback_project(db: DbSession, project_id: uuid.UUID) -> Release:
         image_digest=previous.image_digest,
         image_tag=previous.image_tag,
         app_url=previous.app_url,
+        public_url=previous.public_url,
         build_logs="\n".join(
             [f"Rollback to release {previous.id}", *workload_logs]
         ),

@@ -48,6 +48,25 @@ App URLs after a real deploy use a managed `kubectl port-forward` onto the host
 
 The port is stable per project slug. Redeploy replaces the forwarder.
 
+### Shareable public URL (optional)
+
+With `PUBLIC_TUNNEL_ENABLED=true` (default) and `cloudflared` on PATH, each successful
+deploy also starts a **Cloudflare quick tunnel** to that port:
+
+`https://<random>.trycloudflare.com/`
+
+Stored as `public_url` on the deployment job and release (alongside `app_url`).  
+Quick tunnels are **ephemeral** — they last while the API/`cloudflared` process runs.
+
+```bash
+# Windows: place cloudflared.exe on PATH, or:
+# winget install Cloudflare.cloudflared
+
+PUBLIC_TUNNEL_ENABLED=true
+PUBLIC_TUNNEL_PROVIDER=cloudflared   # or ngrok (+ NGROK_AUTHTOKEN)
+# Disable: PUBLIC_TUNNEL_ENABLED=false
+```
+
 ## GitHub App (real path, optional)
 
 Do **not** block local work on creating an App. When ready:

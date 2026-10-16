@@ -266,7 +266,7 @@ export function GitHubPanel({
       setInfo(
         simulateFailure
           ? `Simulated failure — prior release retained (${job.status})`
-          : `Deployment ${job.status}${job.app_url ? ` · ${job.app_url}` : ""}`,
+          : `Deployment ${job.status}${job.app_url ? ` · ${job.app_url}` : ""}${job.public_url ? ` · share ${job.public_url}` : ""}`,
       );
       setSelectedJob(job);
       refreshDeployments();
@@ -621,7 +621,7 @@ export function GitHubPanel({
         ) : (
           <ul className="divide-y divide-border/60 border border-border/50">
             {releases.map((r) => (
-              <li key={r.id} className="px-4 py-3 text-sm">
+              <li key={r.id} className="space-y-1 px-4 py-3 text-sm">
                 <div className="flex flex-wrap justify-between gap-2">
                   <span className="font-mono text-xs">
                     {r.image_digest.slice(0, 19)}…
@@ -631,7 +631,43 @@ export function GitHubPanel({
                     {r.status}
                   </span>
                 </div>
-                <p className="text-muted-foreground">{r.app_url ?? "—"}</p>
+                <p className="text-muted-foreground">
+                  Local:{" "}
+                  {r.app_url ? (
+                    <a
+                      className="font-mono text-ink underline-offset-2 hover:underline"
+                      href={r.app_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {r.app_url}
+                    </a>
+                  ) : (
+                    "—"
+                  )}
+                </p>
+                {r.public_url ? (
+                  <p className="text-ink">
+                    <span className="font-medium">Share: </span>
+                    <a
+                      className="font-mono text-signal underline-offset-2 hover:underline"
+                      href={r.public_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {r.public_url}
+                    </a>
+                    <span className="mt-0.5 block font-mono text-[11px] text-muted-foreground">
+                      Quick tunnel — ephemeral while the API / cloudflared
+                      process stays running.
+                    </span>
+                  </p>
+                ) : r.is_current ? (
+                  <p className="font-mono text-[11px] text-muted-foreground">
+                    No public share URL (tunnel disabled or unavailable). Local
+                    URL still works.
+                  </p>
+                ) : null}
               </li>
             ))}
           </ul>
