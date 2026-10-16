@@ -1,4 +1,15 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8741";
+const LOCAL_API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8741";
+
+/** Local UI → local API; tunnel/shareable host → same-origin (demo proxy). */
+export function getApiUrl() {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host !== "127.0.0.1" && host !== "localhost") {
+      return window.location.origin;
+    }
+  }
+  return LOCAL_API_URL;
+}
 
 export type AuthUser = {
   id: string;
@@ -14,6 +25,7 @@ export type OAuthProviderStatus = {
   configured: boolean;
   enabled: boolean;
   callback_url: string;
+  callback_urls?: string[];
 };
 
 export type AuthConfig = {
@@ -31,7 +43,7 @@ export type MessageOut = {
 };
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${getApiUrl()}${path}`, {
     ...init,
     credentials: "include",
     headers: {
@@ -53,10 +65,6 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
-}
-
-export function getApiUrl() {
-  return API_URL;
 }
 
 export function fetchAuthConfig() {
@@ -118,7 +126,7 @@ export function verifyPhoneOtp(phone: string, code: string) {
 }
 
 export function oauthStartUrl(provider: string) {
-  return `${API_URL}/api/v1/auth/oauth/${provider}/start`;
+  return `${getApiUrl()}/api/v1/auth/oauth/${provider}/start`;
 }
 
 export type Project = {

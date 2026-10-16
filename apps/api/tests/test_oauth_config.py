@@ -9,6 +9,7 @@ from devdeploy_api.oauth import (
     provider_configured,
     providers_status,
 )
+from devdeploy_api.public_url import oauth_callback_urls
 
 
 def test_oauth_callback_url_uses_api_public():
@@ -20,6 +21,28 @@ def test_oauth_callback_url_uses_api_public():
         oauth_callback_url(settings, "github")
         == "http://127.0.0.1:8741/api/v1/auth/oauth/github/callback"
     )
+
+
+def test_oauth_callback_url_accepts_request_api_base():
+    settings = Settings(api_public_url="http://127.0.0.1:8741", api_prefix="/api/v1")
+    assert (
+        oauth_callback_url(
+            settings,
+            "github",
+            api_base="https://demo.trycloudflare.com",
+        )
+        == "https://demo.trycloudflare.com/api/v1/auth/oauth/github/callback"
+    )
+
+
+def test_oauth_callback_urls_lists_local_and_public():
+    settings = Settings(
+        api_public_url="https://demo.trycloudflare.com",
+        api_prefix="/api/v1",
+    )
+    urls = oauth_callback_urls(settings)
+    assert "http://127.0.0.1:8741/api/v1/auth/oauth/github/callback" in urls
+    assert "https://demo.trycloudflare.com/api/v1/auth/oauth/github/callback" in urls
 
 
 def test_github_falls_back_to_app_client():

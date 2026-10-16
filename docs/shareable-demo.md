@@ -43,35 +43,32 @@ make api
 make web
 ```
 
-`-ApplyEnv` sets (in `.env`, `apps/api/.env`, `apps/web/.env.local`):
+`-ApplyEnv` sets (in `.env` / `apps/api/.env`):
 
 | Variable | Value |
 |----------|--------|
-| `WEB_ORIGIN` | `https://<public>` |
-| `API_PUBLIC_URL` | `https://<public>` |
+| `WEB_ORIGIN` | `http://127.0.0.1:43127` (local fallback) |
+| `API_PUBLIC_URL` | `https://<public>` (webhook hint + callback list) |
 | `CORS_ORIGINS` | local origins + `https://<public>` |
-| `SESSION_COOKIE_SECURE` | `true` |
-| `NEXT_PUBLIC_API_URL` | `https://<public>` |
+| `SESSION_COOKIE_SECURE` | `false` (HTTPS tunnel still sets Secure per-request) |
+| `NEXT_PUBLIC_API_URL` | `http://127.0.0.1:8741` (localhost UI); tunnel pages use same-origin |
 
-Web calls use paths like `/api/v1/...` against that origin; the proxy forwards them to the API **keeping the path**.
+OAuth start picks the callback from the request host (`X-Forwarded-Host` via the proxy, or direct `:8741`). Local and tunnel both work.
 
-## GitHub App callback (required for login)
+Web calls on the public hostname use same-origin `/api/v1/...`; the proxy forwards them to the API **keeping the path**.
 
-You must update the GitHub App **User authorization callback URL** yourself:
+## GitHub App callbacks (required for login)
+
+Register **both** User authorization callback URLs on the GitHub App:
 
 ```
+http://127.0.0.1:8741/api/v1/auth/oauth/github/callback
 https://<public>/api/v1/auth/oauth/github/callback
 ```
 
-Example: if the tunnel prints `https://foo-bar-baz.trycloudflare.com`, set:
+Example: if the tunnel prints `https://foo-bar-baz.trycloudflare.com`, set that public URL **and** keep the local `127.0.0.1:8741` callback so localhost testing still works.
 
-```
-https://foo-bar-baz.trycloudflare.com/api/v1/auth/oauth/github/callback
-```
-
-Quick tunnels mint a **new hostname each run**, so update the callback whenever the public URL changes (or use a named Cloudflare tunnel with a stable hostname).
-
-Homepage URL / setup URL can stay local or match the public origin for the demo session.
+Quick tunnels mint a **new hostname each run**, so update the **public** callback whenever the tunnel URL changes (or use a named Cloudflare tunnel with a stable hostname).
 
 ## Smoke checks
 

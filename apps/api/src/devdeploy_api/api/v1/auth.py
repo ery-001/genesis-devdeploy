@@ -32,8 +32,15 @@ from devdeploy_api.models import User
 from devdeploy_api.oauth import (
     build_authorize_url,
     exchange_code_for_profile,
+    oauth_callback_url,
     provider_configured,
     providers_status,
+)
+from devdeploy_api.public_url import (
+    cookie_secure_for_request,
+    oauth_callback_urls,
+    public_base_from_request,
+    web_origin_from_request,
 )
 from devdeploy_api.schemas import (
     AuthConfigOut,
@@ -60,6 +67,7 @@ def auth_config(settings: Settings = Depends(get_settings)) -> AuthConfigOut:
             OAuthProviderStatus.model_validate(row) for row in providers_status(settings)
         ],
         session_cookie=settings.session_cookie_name,
+        oauth_callback_urls=oauth_callback_urls(settings),
     )
 
 
@@ -71,6 +79,7 @@ def me(user: User = Depends(get_current_user)) -> UserOut:
 @router.post("/register", response_model=UserOut)
 def register(
     body: RegisterRequest,
+    request: Request,
     response: Response,
     db: DbSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -81,19 +90,32 @@ def register(
         password=body.password,
         display_name=body.display_name,
     )
-    create_session(db, user, settings, response)
+    create_session(
+        db,
+        user,
+        settings,
+        response,
+        secure=cookie_secure_for_request(request, settings),
+    )
     return user_to_out(user)
 
 
 @router.post("/login", response_model=UserOut)
 def login(
     body: LoginRequest,
+    request: Request,
     response: Response,
     db: DbSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> UserOut:
     user = login_email(db, email=body.email, password=body.password)
-    create_session(db, user, settings, response)
+    create_session(
+        db,
+        user,
+        settings,
+        response,
+        secure=cookie_secure_for_request(request, settings),
+    )
     return user_to_out(user)
 
 
@@ -131,12 +153,19 @@ def magic_link_request(
 @router.post("/magic-link/verify", response_model=UserOut)
 def magic_link_verify(
     body: MagicLinkVerifyRequest,
+    request: Request,
     response: Response,
     db: DbSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> UserOut:
     user = consume_magic_link(db, body.token)
-    create_session(db, user, settings, response)
+    create_session(
+        db,
+        user,
+        settings,
+        response,
+        secure=cookie_secure_for_request(request, settings),
+    )
     return user_to_out(user)
 
 
@@ -160,48 +189,56 @@ def phone_start(
 @router.post("/phone/verify", response_model=UserOut)
 def phone_verify(
     body: PhoneVerifyRequest,
+    request: Request,
     response: Response,
     db: DbSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> UserOut:
     user = verify_phone_otp(db, settings, body.phone, body.code)
-    create_session(db, user, settings, response)
+    create_session(
+        db,
+        user,
+        settings,
+        response,
+        secure=cookie_secure_for_request(request, settings),
+    )
     return user_to_out(user)
 
 
 @router.get("/oauth/{provider}/start")
 def oauth_start(
     provider: str,
+    request: Request,
     settings: Settings = Depends(get_settings),
 ) -> RedirectResponse:
+    api_base = public_base_from_request(request, settings)
+    web_origin = web_origin_from_request(request, settings)
+
     if provider not in OAUTH_PROVIDERS:
         return RedirectResponse(
-            url=f"{settings.web_origin}/login?error=unsupported_provider",
+            url=f"{web_origin}/login?error=unsupported_provider",
             status_code=302,
         )
 
-    state = start_oauth_state(provider)
+    state = start_oauth_state(provider, api_base=api_base, web_origin=web_origin)
 
     if settings.auth_mock_mode:
         # Mock: bounce straight to callback with a fake code
         qs = urlencode({"code": f"mock-{provider}", "state": state})
-        callback = (
-            f"{settings.api_public_url}{settings.api_prefix}"
-            f"/auth/oauth/{provider}/callback?{qs}"
-        )
-        return RedirectResponse(url=callback, status_code=302)
+        callback = oauth_callback_url(settings, provider, api_base=api_base)
+        return RedirectResponse(url=f"{callback}?{qs}", status_code=302)
 
     if not provider_configured(settings, provider):
         return RedirectResponse(
             url=(
-                f"{settings.web_origin}/login"
+                f"{web_origin}/login"
                 f"?error=oauth_not_configured&provider={provider}"
             ),
             status_code=302,
         )
 
     return RedirectResponse(
-        url=build_authorize_url(settings, provider, state),
+        url=build_authorize_url(settings, provider, state, api_base=api_base),
         status_code=302,
     )
 
@@ -214,20 +251,28 @@ def _finish_oauth_callback(
     error: str | None,
     db: DbSession,
     settings: Settings,
+    request: Request,
 ) -> RedirectResponse:
+    # Fallback web origin before state is consumed (error / missing state paths).
+    web_origin = web_origin_from_request(request, settings)
+    api_base = public_base_from_request(request, settings)
+    cookie_secure = cookie_secure_for_request(request, settings)
+
     if error:
         return RedirectResponse(
-            url=f"{settings.web_origin}/login?error={error}",
+            url=f"{web_origin}/login?error={error}",
             status_code=302,
         )
     if provider not in OAUTH_PROVIDERS or not code or not state:
         return RedirectResponse(
-            url=f"{settings.web_origin}/login?error=oauth_failed",
+            url=f"{web_origin}/login?error=oauth_failed",
             status_code=302,
         )
 
     try:
-        consume_oauth_state(state, provider)
+        oauth_meta = consume_oauth_state(state, provider)
+        web_origin = str(oauth_meta.get("web_origin") or web_origin).rstrip("/")
+        api_base = str(oauth_meta.get("api_base") or api_base).rstrip("/")
 
         if settings.auth_mock_mode:
             profile = mock_oauth_profile(provider)
@@ -235,12 +280,14 @@ def _finish_oauth_callback(
             if not provider_configured(settings, provider):
                 return RedirectResponse(
                     url=(
-                        f"{settings.web_origin}/login"
+                        f"{web_origin}/login"
                         f"?error=oauth_not_configured&provider={provider}"
                     ),
                     status_code=302,
                 )
-            profile = exchange_code_for_profile(settings, provider, code)
+            profile = exchange_code_for_profile(
+                settings, provider, code, api_base=api_base
+            )
 
         user = upsert_oauth_user(
             db,
@@ -255,21 +302,22 @@ def _finish_oauth_callback(
         msg = detail if isinstance(detail, str) else "oauth_failed"
         safe = urlencode({"error": str(msg)[:120]})
         return RedirectResponse(
-            url=f"{settings.web_origin}/login?{safe}",
+            url=f"{web_origin}/login?{safe}",
             status_code=302,
         )
 
     redirect = RedirectResponse(
-        url=f"{settings.web_origin}/dashboard",
+        url=f"{web_origin}/dashboard",
         status_code=302,
     )
-    create_session(db, user, settings, redirect)
+    create_session(db, user, settings, redirect, secure=cookie_secure)
     return redirect
 
 
 @router.get("/oauth/{provider}/callback")
 def oauth_callback_get(
     provider: str,
+    request: Request,
     db: DbSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
     code: str | None = Query(default=None),
@@ -283,12 +331,14 @@ def oauth_callback_get(
         error=error,
         db=db,
         settings=settings,
+        request=request,
     )
 
 
 @router.post("/oauth/{provider}/callback")
 def oauth_callback_post(
     provider: str,
+    request: Request,
     db: DbSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
     code: str | None = Form(default=None),
@@ -303,4 +353,5 @@ def oauth_callback_post(
         error=error,
         db=db,
         settings=settings,
+        request=request,
     )
