@@ -87,7 +87,33 @@ make down
 # or: docker compose down
 ```
 
+## Shareable public demo (optional)
+
+To let someone else open one HTTPS link (UI + API on the same hostname so cookies work), see **`docs/shareable-demo.md`**.
+
+```powershell
+# With API + web already running:
+.\scripts\start-shareable-demo.ps1 -ApplyEnv
+# Restart make api / make web, then set the GitHub App callback to the printed URL.
+```
+
+## Demo Version 1 (after API + web are up)
+
+1. Open http://127.0.0.1:43127 → Sign up / Sign in  
+2. **Projects → New** → open the project  
+3. Connect mock GitHub App (or Sync a real install) → Attach repo → set deploy branch  
+4. **Runtime settings**: Dockerfile, port, health, resources, auto_deploy → Save  
+5. **Deploy** → open `/deployments/<id>` for logs; Cancel works on in-progress jobs  
+6. **Metrics** link → charts + quotas + scans  
+7. **Variables** (nav or `/variables`) → add a secret (preview is masked)  
+8. Paste `examples/sample-fastapi-app/devdeploy.yaml` → Validate / Apply  
+9. Webhook auto-deploy: set GitHub App webhook to  
+   `{API_PUBLIC_URL}/api/v1/webhooks/github`  
+   (use shareable-demo / cloudflared HTTPS when GitHub cannot reach localhost; HMAC secret = `GITHUB_APP_WEBHOOK_SECRET`)  
+10. **Settings**: invite member, API key → `apps/cli` `devdeploy login` / `deploy`
+
 ## Notes
 
 - Login ≠ repo access: install/sync the **GitHub App** to attach repos (`README.md`, `docs/real-infra.md`).
-- Local registry defaults to `LOCAL_REGISTRY=localhost:5001` in `.env.example`; on Windows, prefer `127.0.0.1:5001` if `localhost` hits IPv6 timeouts.
+- Local registry defaults to `LOCAL_REGISTRY=127.0.0.1:5001` in `.env.example`.
+- For HTTPS shareable demos, keep `SESSION_COOKIE_SECURE=true`; for plain `http://127.0.0.1` local, set it `false` so the session cookie is sent.

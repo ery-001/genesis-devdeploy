@@ -37,6 +37,9 @@ htmlcov/
 # Docker
 *.pid
 
+# Shareable demo tunnel runtime (URL/PID/logs)
+.demo-tunnel/
+
 # Terraform
 infrastructure/terraform/.terraform/
 infrastructure/terraform/*.tfstate

@@ -5,30 +5,41 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from devdeploy_api import build_engine, k8s_engine
+from devdeploy_api import build_engine, k8s_engine, notify, scan_engine
 from devdeploy_api.config import get_settings
+from devdeploy_api.crypto_util import decrypt_secret
 from devdeploy_api.db import SessionLocal
-from devdeploy_api.models import DeploymentJob, K8sResourceIntent, Project, Release
+from devdeploy_api.models import (
+    DeploymentJob,
+    K8sResourceIntent,
+    Project,
+    ProjectEnvironment,
+    ProjectVariable,
+    Release,
+)
 from devdeploy_api.redis_client import get_redis
 
 LIFECYCLE = (
     "queued",
+    "pending_approval",
     "building",
     "publishing",
     "deploying",
     "succeeded",
     "failed",
     "rolled_back",
+    "cancelled",
 )
+
+ACTIVE = frozenset({"queued", "building", "publishing", "deploying"})
 
 
 def _append_log(job: DeploymentJob, line: str) -> None:
-    from datetime import UTC, datetime
-
     stamp = datetime.now(UTC).strftime("%H:%M:%S")
     entry = f"[{stamp}] {line}"
     job.build_logs = f"{job.build_logs}\n{entry}" if job.build_logs else entry
@@ -51,6 +62,51 @@ def _current_release(db: DbSession, project_id: uuid.UUID) -> Release | None:
     ).scalar_one_or_none()
 
 
+def _was_cancelled(db: DbSession, job_id: uuid.UUID) -> bool:
+    job = db.get(DeploymentJob, job_id)
+    return bool(job and (job.status == "cancelled" or job.cancelled_at is not None))
+
+
+def _load_env_vars(
+    db: DbSession, project_id: uuid.UUID, environment_name: str
+) -> dict[str, str]:
+    rows = db.execute(
+        select(ProjectVariable).where(
+            ProjectVariable.project_id == project_id,
+            ProjectVariable.environment_name == environment_name,
+        )
+    ).scalars().all()
+    out: dict[str, str] = {}
+    for row in rows:
+        try:
+            out[row.key] = decrypt_secret(row.value_encrypted)
+        except ValueError:
+            continue
+    return out
+
+
+def cancel_job(db: DbSession, job: DeploymentJob) -> DeploymentJob:
+    if job.status not in ACTIVE and job.status != "pending_approval":
+        raise ValueError(f"Cannot cancel job in status {job.status}")
+    job.status = "cancelled"
+    job.cancelled_at = datetime.now(UTC)
+    _append_log(job, "Cancelled by user")
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def queue_job_id(job_id: uuid.UUID) -> None:
+    redis = get_redis()
+    try:
+        redis.lpush(
+            "devdeploy:deployments",
+            json.dumps({"id": str(job_id)}),
+        )
+    finally:
+        redis.close()
+
+
 def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob:
     """Run the full pipeline for one job. Preserves healthy release on failure."""
     settings = get_settings()
@@ -59,6 +115,11 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
         job = db.get(DeploymentJob, job_id)
         if job is None:
             raise ValueError(f"job {job_id} not found")
+        if job.status in ("cancelled", "succeeded", "failed", "rolled_back"):
+            return job
+        if job.status == "pending_approval":
+            return job
+
         project = db.get(Project, job.project_id)
         if project is None:
             raise ValueError("project missing")
@@ -72,6 +133,8 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
             "building",
             f"Starting isolated build ({mode} BuildKit)",
         )
+        if _was_cancelled(db, job_id):
+            return db.get(DeploymentJob, job_id)  # type: ignore[return-value]
         time.sleep(step_delay)
 
         if job.simulate_failure:
@@ -94,7 +157,7 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
                 repo_full_name=project.github_repo_full_name,
                 dockerfile_path=project.dockerfile_path or "Dockerfile",
             )
-        except Exception as exc:  # noqa: BLE001 — surface in job logs
+        except Exception as exc:  # noqa: BLE001
             _set_status(db, job, "failed", f"Build failed: {exc}")
             if prior:
                 _append_log(
@@ -108,14 +171,33 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
             _append_log(job, line)
         db.commit()
 
+        if _was_cancelled(db, job_id):
+            return db.get(DeploymentJob, job_id)  # type: ignore[return-value]
+
         _set_status(db, job, "publishing", "Publishing image digest")
         time.sleep(step_delay)
         job.image_digest = build.digest
         job.image_tag = build.image_tag
         db.commit()
 
-        # Load local tag into kind so imagePullPolicy: IfNotPresent works offline.
-        # Required when K8S_MOCK_MODE=false (registry push alone is not enough on kind).
+        try:
+            scan = scan_engine.persist_scan(
+                db,
+                project_id=project.id,
+                deployment_job_id=job.id,
+                image_digest=job.image_digest,
+                image_ref=job.image_tag or build.image_tag,
+            )
+            _append_log(
+                job,
+                f"Vulnerability scan ({scan.scanner}): "
+                f"C={scan.critical} H={scan.high} M={scan.medium} L={scan.low}",
+            )
+            db.commit()
+        except Exception as exc:  # noqa: BLE001
+            _append_log(job, f"Scan skipped: {exc}")
+            db.commit()
+
         if not k8s_engine.effective_k8s_mock(settings) and not build.mocked:
             try:
                 local_short = f"devdeploy/{project.slug}:{str(job.id)[:8]}"
@@ -124,7 +206,6 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
                 )
                 for line in load_lines:
                     _append_log(job, line)
-                # Prefer the short tag for the Deployment (already on the node)
                 job.image_tag = local_short
                 db.commit()
             except Exception as exc:  # noqa: BLE001
@@ -137,8 +218,23 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
                     db.commit()
                 return job
 
+        if _was_cancelled(db, job_id):
+            return db.get(DeploymentJob, job_id)  # type: ignore[return-value]
+
         _set_status(db, job, "deploying", "Applying workload-plane manifests")
         time.sleep(step_delay)
+
+        env_row = db.execute(
+            select(ProjectEnvironment)
+            .where(ProjectEnvironment.project_id == project.id)
+            .where(ProjectEnvironment.name == job.environment_name)
+        ).scalar_one_or_none()
+        replicas = (
+            env_row.replicas
+            if env_row is not None
+            else (project.replicas or 1)
+        )
+        env_vars = _load_env_vars(db, project.id, job.environment_name)
 
         try:
             deploy = k8s_engine.deploy_to_cluster(
@@ -146,6 +242,14 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
                 project_slug=project.slug,
                 image_tag=job.image_tag or build.image_tag,
                 image_digest=job.image_digest or build.digest,
+                container_port=project.container_port,
+                health_path=project.health_path or "/health",
+                replicas=replicas,
+                cpu_request=project.cpu_request,
+                memory_request=project.memory_request,
+                cpu_limit=project.cpu_limit,
+                memory_limit=project.memory_limit,
+                env=env_vars or None,
             )
         except Exception as exc:  # noqa: BLE001
             _set_status(db, job, "failed", f"Deploy failed: {exc}")
@@ -200,6 +304,17 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
         if deploy.public_url:
             ok_msg += f" · public {deploy.public_url}"
         _set_status(db, job, "succeeded", ok_msg)
+
+        for note in notify.notify_deployment(
+            db,
+            organization_id=project.organization_id,
+            project_name=project.name,
+            job_id=job.id,
+            status="succeeded",
+            message=ok_msg,
+        ):
+            _append_log(job, note)
+        db.commit()
         return job
     finally:
         db.close()

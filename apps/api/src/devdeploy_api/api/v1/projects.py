@@ -18,8 +18,6 @@ from devdeploy_api.schemas import (
     ProjectUpdate,
 )
 
-# DeploymentJobOut still used by list_project_deployments
-
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
@@ -71,11 +69,7 @@ def patch_project(
         db,
         user,
         project_id,
-        name=body.name,
-        slug=body.slug,
-        description=body.description,
-        deploy_branch=body.deploy_branch,
-        dockerfile_path=body.dockerfile_path,
+        **body.model_dump(exclude_unset=True),
     )
     return ProjectOut.model_validate(project)
 

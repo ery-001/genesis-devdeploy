@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { GitHubPanel } from "@/components/projects/github-panel";
+import { ProjectSettingsPanel } from "@/components/projects/project-settings-panel";
 import { Button } from "@/components/ui/button";
 import { useRequireUser } from "@/hooks/use-require-user";
 import { deleteProject, getProject, type Project } from "@/lib/api";
@@ -13,7 +14,9 @@ import { deleteProject, getProject, type Project } from "@/lib/api";
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { user, loading: authLoading } = useRequireUser(`/projects/${params.id}`);
+  const { user, loading: authLoading } = useRequireUser(
+    "/projects/" + params.id,
+  );
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,7 +54,7 @@ export default function ProjectDetailPage() {
 
   async function onDelete() {
     if (!project) return;
-    if (!window.confirm(`Delete project “${project.name}”?`)) return;
+    if (!window.confirm("Delete project “" + project.name + "”?")) return;
     setDeleting(true);
     try {
       await deleteProject(project.id);
@@ -92,14 +95,28 @@ export default function ProjectDetailPage() {
             )}
           </div>
           {project ? (
-            <Button
-              variant="destructive"
-              disabled={deleting}
-              onClick={onDelete}
-              className="h-9"
-            >
-              {deleting ? "Deleting…" : "Delete"}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href={"/projects/" + project.id + "/metrics"}
+                className="inline-flex h-9 items-center rounded-md border border-border bg-white/50 px-3 text-sm hover:bg-white"
+              >
+                Metrics
+              </Link>
+              <Link
+                href="/variables"
+                className="inline-flex h-9 items-center rounded-md border border-border bg-white/50 px-3 text-sm hover:bg-white"
+              >
+                Variables
+              </Link>
+              <Button
+                variant="destructive"
+                disabled={deleting}
+                onClick={onDelete}
+                className="h-9"
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </Button>
+            </div>
           ) : null}
         </div>
 
@@ -118,11 +135,25 @@ export default function ProjectDetailPage() {
               <p className="text-sm leading-relaxed text-foreground/90">
                 {project.description || "No description yet."}
               </p>
-              <dl className="grid gap-3 text-sm sm:grid-cols-2">
+              <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
                 <div>
                   <dt className="text-muted-foreground">Dockerfile</dt>
                   <dd className="font-mono text-ink">
                     {project.dockerfile_path ?? "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Port / health</dt>
+                  <dd className="font-mono text-ink">
+                    {project.container_port ?? 8000} ·{" "}
+                    {project.health_path ?? "/health"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Auto-deploy</dt>
+                  <dd className="font-mono text-ink">
+                    {project.auto_deploy ? "on" : "off"} · {project.replicas ?? 1}{" "}
+                    replicas
                   </dd>
                 </div>
                 <div>
@@ -135,6 +166,10 @@ export default function ProjectDetailPage() {
             </section>
 
             <GitHubPanel project={project} onProjectChange={setProject} />
+            <ProjectSettingsPanel
+              project={project}
+              onProjectChange={setProject}
+            />
           </>
         ) : null}
       </div>

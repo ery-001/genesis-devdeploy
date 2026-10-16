@@ -1,0 +1,11 @@
+# Sample DevDeploy project settings — validate/apply from the project UI.
+dockerfile: Dockerfile
+port: 8000
+health: /health
+cpu: 100m
+memory: 128Mi
+cpu_limit: 500m
+memory_limit: 512Mi
+auto_deploy: true
+replicas: 1
+branch: main

@@ -252,42 +252,74 @@ def enqueue_deployment(
     delivery_id: str | None = None,
     message: str | None = None,
     simulate_failure: bool = False,
+    environment_name: str = "development",
+    skip_queue: bool = False,
 ) -> DeploymentJob:
+    from devdeploy_api.models import DeploymentApproval, ProjectEnvironment
+
     if not project.github_repo_full_name:
         raise HTTPException(
             status_code=400,
             detail="Project has no GitHub repository attached",
         )
+
+    env_name = (environment_name or "development").strip().lower()
+    env = db.execute(
+        select(ProjectEnvironment)
+        .where(ProjectEnvironment.project_id == project.id)
+        .where(ProjectEnvironment.name == env_name)
+    ).scalar_one_or_none()
+
+    needs_approval = bool(
+        env and env.approval_required
+    ) or (env_name == "production" and project.approval_required_prod)
+
+    initial_status = "pending_approval" if needs_approval else "queued"
     job = DeploymentJob(
         project_id=project.id,
-        status="queued",
+        status=initial_status,
         trigger=trigger,
         git_ref=git_ref or project.deploy_branch or project.default_branch or "main",
         commit_sha=commit_sha,
         github_delivery_id=delivery_id,
-        message=message or "Queued for build → publish → deploy",
+        message=message
+        or (
+            "Awaiting production approval"
+            if needs_approval
+            else "Queued for build → publish → deploy"
+        ),
         simulate_failure=simulate_failure,
+        environment_name=env_name,
     )
     db.add(job)
+    db.flush()
+    if needs_approval:
+        db.add(
+            DeploymentApproval(
+                deployment_job_id=job.id,
+                status="pending",
+            )
+        )
     db.commit()
     db.refresh(job)
 
-    redis = get_redis()
-    try:
-        redis.lpush(
-            "devdeploy:deployments",
-            json.dumps(
-                {
-                    "id": str(job.id),
-                    "project_id": str(project.id),
-                    "status": job.status,
-                    "trigger": job.trigger,
-                    "git_ref": job.git_ref,
-                }
-            ),
-        )
-    finally:
-        redis.close()
+    if not skip_queue and not needs_approval:
+        redis = get_redis()
+        try:
+            redis.lpush(
+                "devdeploy:deployments",
+                json.dumps(
+                    {
+                        "id": str(job.id),
+                        "project_id": str(project.id),
+                        "status": job.status,
+                        "trigger": job.trigger,
+                        "git_ref": job.git_ref,
+                    }
+                ),
+            )
+        finally:
+            redis.close()
     return job
 
 
@@ -308,8 +340,12 @@ def manual_deploy(
     project_id: uuid.UUID,
     *,
     simulate_failure: bool = False,
+    environment_name: str = "development",
 ) -> DeploymentJob:
+    from devdeploy_api.rbac import require_project_role
+
     project = get_project_for_user(db, user, project_id)
+    require_project_role(db, user, project, "developer")
     return enqueue_deployment(
         db,
         project,
@@ -317,6 +353,7 @@ def manual_deploy(
         git_ref=project.deploy_branch or project.default_branch,
         message="Manual deploy requested",
         simulate_failure=simulate_failure,
+        environment_name=environment_name,
     )
 
 
@@ -349,6 +386,8 @@ def handle_push_event(db: DbSession, payload: dict[str, Any], delivery_id: str) 
     )
     created: DeploymentJob | None = None
     for project in projects:
+        if not project.auto_deploy:
+            continue
         deploy_branch = project.deploy_branch or project.default_branch or "main"
         if branch != deploy_branch:
             continue
@@ -361,6 +400,7 @@ def handle_push_event(db: DbSession, payload: dict[str, Any], delivery_id: str) 
             commit_sha=head,
             delivery_id=delivery_id,
             message=f"Push to {branch}",
+            environment_name="development",
         )
     return created
 
