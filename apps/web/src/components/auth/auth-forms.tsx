@@ -17,6 +17,7 @@ import {
   startPhoneOtp,
   verifyMagicLink,
   verifyPhoneOtp,
+  type OAuthProviderStatus,
 } from "@/lib/api";
 
 type Mode = "login" | "signup";
@@ -25,6 +26,7 @@ export function AuthForms({ mode }: { mode: Mode }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [mockMode, setMockMode] = useState(true);
+  const [oauthProviders, setOauthProviders] = useState<OAuthProviderStatus[]>([]);
   const [tab, setTab] = useState<"password" | "magic" | "phone">("password");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -40,11 +42,21 @@ export function AuthForms({ mode }: { mode: Mode }) {
 
   useEffect(() => {
     fetchAuthConfig()
-      .then((cfg) => setMockMode(cfg.mock_mode))
-      .catch(() => setMockMode(true));
+      .then((cfg) => {
+        setMockMode(cfg.mock_mode);
+        setOauthProviders(cfg.oauth_providers ?? []);
+      })
+      .catch(() => {
+        setMockMode(true);
+        setOauthProviders([]);
+      });
 
     const err = searchParams.get("error");
-    if (err) setError(err.replaceAll("_", " "));
+    const provider = searchParams.get("provider");
+    if (err) {
+      const label = provider ? `${err.replaceAll("_", " ")} (${provider})` : err.replaceAll("_", " ");
+      setError(label);
+    }
   }, [searchParams]);
 
   async function onPasswordSubmit(e: React.FormEvent) {
@@ -143,7 +155,7 @@ export function AuthForms({ mode }: { mode: Mode }) {
 
   return (
     <div className="space-y-6">
-      <OAuthButtons mockMode={mockMode} />
+      <OAuthButtons mockMode={mockMode} oauthProviders={oauthProviders} />
 
       <div className="flex items-center gap-3">
         <Separator className="flex-1" />

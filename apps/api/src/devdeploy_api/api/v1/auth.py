@@ -1,10 +1,10 @@
-"""Auth routes: email, magic link, phone OTP, OAuth (mockable)."""
+"""Auth routes: email, magic link, phone OTP, OAuth (mockable or real)."""
 
 from __future__ import annotations
 
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Form, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session as DbSession
 
@@ -29,12 +29,19 @@ from devdeploy_api.auth_service import (
 from devdeploy_api.config import Settings, get_settings
 from devdeploy_api.deps import get_current_user, get_db
 from devdeploy_api.models import User
+from devdeploy_api.oauth import (
+    build_authorize_url,
+    exchange_code_for_profile,
+    provider_configured,
+    providers_status,
+)
 from devdeploy_api.schemas import (
     AuthConfigOut,
     LoginRequest,
     MagicLinkRequest,
     MagicLinkVerifyRequest,
     MessageOut,
+    OAuthProviderStatus,
     PhoneStartRequest,
     PhoneVerifyRequest,
     RegisterRequest,
@@ -49,6 +56,9 @@ def auth_config(settings: Settings = Depends(get_settings)) -> AuthConfigOut:
     return AuthConfigOut(
         mock_mode=settings.auth_mock_mode,
         providers=["email", "phone", *OAUTH_PROVIDERS],
+        oauth_providers=[
+            OAuthProviderStatus.model_validate(row) for row in providers_status(settings)
+        ],
         session_cookie=settings.session_cookie_name,
     )
 
@@ -106,9 +116,13 @@ def magic_link_request(
     settings: Settings = Depends(get_settings),
 ) -> MessageOut:
     token = issue_magic_link(settings, body.email)
-    # In production we'd email the link; in mock/dev we return the token.
+    # Email delivery is stubbed; token is only returned in mock mode.
     return MessageOut(
-        message="Magic link issued. Check your email (or use the token in mock mode).",
+        message=(
+            "Magic link issued."
+            if settings.auth_mock_mode
+            else "Magic link issued (email delivery not configured — use password or OAuth)."
+        ),
         mock=settings.auth_mock_mode,
         magic_link_token=token if settings.auth_mock_mode else None,
     )
@@ -133,7 +147,11 @@ def phone_start(
 ) -> MessageOut:
     phone = start_phone_otp(settings, body.phone)
     return MessageOut(
-        message=f"OTP sent to {phone}",
+        message=(
+            f"OTP sent to {phone}"
+            if settings.auth_mock_mode
+            else f"OTP generated for {phone} (SMS delivery not configured)."
+        ),
         mock=settings.auth_mock_mode,
         otp_hint=settings.mock_otp_code if settings.auth_mock_mode else None,
     )
@@ -173,22 +191,29 @@ def oauth_start(
         )
         return RedirectResponse(url=callback, status_code=302)
 
-    # Real OAuth start stubs — redirect URLs when credentials are configured later
+    if not provider_configured(settings, provider):
+        return RedirectResponse(
+            url=(
+                f"{settings.web_origin}/login"
+                f"?error=oauth_not_configured&provider={provider}"
+            ),
+            status_code=302,
+        )
+
     return RedirectResponse(
-        url=f"{settings.web_origin}/login?error=oauth_not_configured&provider={provider}",
+        url=build_authorize_url(settings, provider, state),
         status_code=302,
     )
 
 
-@router.get("/oauth/{provider}/callback")
-def oauth_callback(
+def _finish_oauth_callback(
+    *,
     provider: str,
-    response: Response,
-    db: DbSession = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-    code: str | None = Query(default=None),
-    state: str | None = Query(default=None),
-    error: str | None = Query(default=None),
+    code: str | None,
+    state: str | None,
+    error: str | None,
+    db: DbSession,
+    settings: Settings,
 ) -> RedirectResponse:
     if error:
         return RedirectResponse(
@@ -201,28 +226,81 @@ def oauth_callback(
             status_code=302,
         )
 
-    consume_oauth_state(state, provider)
+    try:
+        consume_oauth_state(state, provider)
 
-    if settings.auth_mock_mode:
-        profile = mock_oauth_profile(provider)
-    else:
-        # Real token exchange lands here in a later pass
+        if settings.auth_mock_mode:
+            profile = mock_oauth_profile(provider)
+        else:
+            if not provider_configured(settings, provider):
+                return RedirectResponse(
+                    url=(
+                        f"{settings.web_origin}/login"
+                        f"?error=oauth_not_configured&provider={provider}"
+                    ),
+                    status_code=302,
+                )
+            profile = exchange_code_for_profile(settings, provider, code)
+
+        user = upsert_oauth_user(
+            db,
+            provider=provider,
+            subject=str(profile["subject"]),
+            email=profile.get("email"),
+            display_name=profile.get("display_name"),
+            avatar_url=profile.get("avatar_url"),
+        )
+    except Exception as exc:  # noqa: BLE001 — map to login error query
+        detail = getattr(exc, "detail", None)
+        msg = detail if isinstance(detail, str) else "oauth_failed"
+        safe = urlencode({"error": str(msg)[:120]})
         return RedirectResponse(
-            url=f"{settings.web_origin}/login?error=oauth_not_configured",
+            url=f"{settings.web_origin}/login?{safe}",
             status_code=302,
         )
 
-    user = upsert_oauth_user(
-        db,
-        provider=provider,
-        subject=profile["subject"],
-        email=profile["email"],
-        display_name=profile["display_name"],
-    )
-    # Build redirect response with session cookie
     redirect = RedirectResponse(
         url=f"{settings.web_origin}/dashboard",
         status_code=302,
     )
     create_session(db, user, settings, redirect)
     return redirect
+
+
+@router.get("/oauth/{provider}/callback")
+def oauth_callback_get(
+    provider: str,
+    db: DbSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+) -> RedirectResponse:
+    return _finish_oauth_callback(
+        provider=provider,
+        code=code,
+        state=state,
+        error=error,
+        db=db,
+        settings=settings,
+    )
+
+
+@router.post("/oauth/{provider}/callback")
+def oauth_callback_post(
+    provider: str,
+    db: DbSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    code: str | None = Form(default=None),
+    state: str | None = Form(default=None),
+    error: str | None = Form(default=None),
+) -> RedirectResponse:
+    """Apple Sign In uses response_mode=form_post."""
+    return _finish_oauth_callback(
+        provider=provider,
+        code=code,
+        state=state,
+        error=error,
+        db=db,
+        settings=settings,
+    )

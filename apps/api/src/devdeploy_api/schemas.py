@@ -55,9 +55,17 @@ class MessageOut(BaseModel):
     otp_hint: str | None = None
 
 
+class OAuthProviderStatus(BaseModel):
+    id: str
+    configured: bool
+    enabled: bool
+    callback_url: str
+
+
 class AuthConfigOut(BaseModel):
     mock_mode: bool
     providers: list[str]
+    oauth_providers: list[OAuthProviderStatus] = []
     session_cookie: str
 
 

@@ -196,7 +196,9 @@ export function GitHubPanel({
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Repo access uses a GitHub App installation — separate from user
-              sign-in.
+              sign-in. Signing in with Google, email, phone, Apple, or Microsoft
+              does not grant repository access; install or connect this GitHub
+              App to list and attach repos.
               {config?.mock_mode
                 ? " Mock mode is on (no real App credentials required)."
                 : null}

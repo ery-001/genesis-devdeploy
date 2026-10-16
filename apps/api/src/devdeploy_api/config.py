@@ -35,7 +35,8 @@ class Settings(BaseSettings):
     auth_mock_mode: bool = True
     mock_otp_code: str = "000000"
 
-    # Optional real OAuth credentials (unused while auth_mock_mode=true)
+    # Real OAuth credentials (used when AUTH_MOCK_MODE=false).
+    # GitHub login falls back to GITHUB_APP_CLIENT_ID/SECRET when these are empty.
     google_client_id: str = ""
     google_client_secret: str = ""
     github_client_id: str = ""
@@ -44,6 +45,7 @@ class Settings(BaseSettings):
     apple_client_secret: str = ""
     microsoft_client_id: str = ""
     microsoft_client_secret: str = ""
+    microsoft_tenant_id: str = "common"
 
     # GitHub App (repo authorization) — separate from user sign-in
     # When credentials are missing, github_mock_mode stays on for local demos.

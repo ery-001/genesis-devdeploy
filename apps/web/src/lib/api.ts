@@ -9,9 +9,17 @@ export type AuthUser = {
   providers: string[];
 };
 
+export type OAuthProviderStatus = {
+  id: string;
+  configured: boolean;
+  enabled: boolean;
+  callback_url: string;
+};
+
 export type AuthConfig = {
   mock_mode: boolean;
   providers: string[];
+  oauth_providers?: OAuthProviderStatus[];
   session_cookie: string;
 };
 
