@@ -1,24 +1,30 @@
-"""Milestone 3–6 automated checks for the control-plane pipeline."""
+"""Pipeline checks — mock path always; real Docker/kind when available."""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
 import json
+import os
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-# Use the running Postgres from local env
+from devdeploy_api import build_engine, k8s_engine, pipeline
 from devdeploy_api.config import get_settings
-from devdeploy_api.db import Base, get_db
+from devdeploy_api.db import get_db
 from devdeploy_api.main import app
-from devdeploy_api import pipeline
-from devdeploy_api.redis_client import get_redis
 
+
+# Force mock adapters for the default suite so CI stays fast/offline-friendly.
+os.environ["BUILD_MOCK_MODE"] = "true"
+os.environ["K8S_MOCK_MODE"] = "true"
+os.environ["AWS_MOCK_MODE"] = "true"
+os.environ["GITHUB_MOCK_MODE"] = "true"
+get_settings.cache_clear()
 
 settings = get_settings()
 engine = create_engine(settings.database_url, pool_pre_ping=True)
@@ -40,6 +46,7 @@ def client():
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+    get_settings.cache_clear()
 
 
 def _auth(client: TestClient) -> None:
@@ -87,6 +94,7 @@ def test_queue_build_deploy_success(client: TestClient):
     assert job["image_digest"] and job["image_digest"].startswith("sha256:")
     assert job["app_url"]
     assert "Build completed" in (job["build_logs"] or "")
+    assert "mock" in (job["build_logs"] or "").lower()
 
     releases = client.get(f"/api/v1/projects/{pid}/releases").json()
     assert any(x["is_current"] for x in releases)
@@ -155,7 +163,6 @@ def test_webhook_dedupe(client: TestClient):
 def test_authz_project_routes(client: TestClient):
     _auth(client)
     pid = _project_with_repo(client)
-    # Second user cannot see project
     email2 = f"other-{uuid.uuid4().hex[:8]}@example.com"
     client.post(
         "/api/v1/auth/register",
@@ -171,3 +178,63 @@ def test_metrics_endpoint(client: TestClient):
     m = client.get(f"/api/v1/projects/{pid}/metrics").json()
     assert m["source"] == "mock"
     assert m["cpu_percent"] >= 0
+
+
+def test_docker_available_helper():
+    # Informational — should not fail the suite either way
+    assert isinstance(build_engine.docker_available(), bool)
+
+
+@pytest.mark.skipif(
+    not build_engine.docker_available(),
+    reason="Docker daemon not available",
+)
+def test_real_docker_build_engine():
+    get_settings.cache_clear()
+    s = get_settings()
+    # Temporarily force real build regardless of env defaults used by suite
+    s.build_mock_mode = False
+    result = build_engine.build_and_publish(
+        s,
+        project_slug="real-build-test",
+        job_id=uuid.uuid4().hex,
+        git_ref="main",
+        repo_full_name="mock-org/sample-fastapi-app",
+        dockerfile_path="Dockerfile",
+    )
+    assert result.mocked is False
+    assert result.digest.startswith("sha256:")
+    assert any("real Docker" in line or "BuildKit" in line for line in result.logs)
+
+
+@pytest.mark.skipif(
+    not (
+        build_engine.docker_available()
+        and k8s_engine.kubectl_available(
+            type("S", (), {"k8s_context": "kind-devdeploy"})()
+        )
+    ),
+    reason="Docker + kind cluster not available",
+)
+def test_real_docker_kind_deploy_via_api(client: TestClient, monkeypatch):
+    monkeypatch.setenv("BUILD_MOCK_MODE", "false")
+    monkeypatch.setenv("K8S_MOCK_MODE", "false")
+    get_settings.cache_clear()
+
+    _auth(client)
+    pid = _project_with_repo(client)
+    r = client.post(f"/api/v1/projects/{pid}/deploy", json={})
+    assert r.status_code == 201, r.text
+    job = r.json()
+    assert job["status"] == "succeeded", job.get("build_logs")
+    assert "Using real Docker" in (job["build_logs"] or "")
+    assert "Using real Kubernetes" in (job["build_logs"] or "")
+    assert job["app_url"]
+    # App should be reachable through kind ingress
+    import httpx
+
+    url = job["app_url"].rstrip("/") + "/health"
+    resp = httpx.get(url, timeout=20.0)
+    assert resp.status_code == 200, resp.text
+    assert resp.json().get("status") == "ok"
+    get_settings.cache_clear()

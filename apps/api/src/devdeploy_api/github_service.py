@@ -123,11 +123,65 @@ def list_repos_for_installation(
     installation = get_installation_for_user(db, user, installation_uuid)
     if settings.effective_github_mock or installation.is_mock:
         return MOCK_REPOS
-    # Real GitHub App installation token + list repos lands when credentials exist.
-    raise HTTPException(
-        status_code=501,
-        detail="Real GitHub repo listing requires a configured GitHub App",
-    )
+    try:
+        from devdeploy_api.github_app_auth import list_installation_repos
+
+        return list_installation_repos(settings, installation.installation_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub App repo listing failed: {exc}",
+        ) from exc
+
+
+def sync_real_installations(
+    settings: Settings, db: DbSession, user: User
+) -> list[GitHubInstallation]:
+    """Pull installations from the configured GitHub App into the local DB."""
+    if settings.effective_github_mock:
+        raise HTTPException(
+            status_code=400,
+            detail="Set GITHUB_MOCK_MODE=false and configure App credentials first",
+        )
+    from devdeploy_api.github_app_auth import list_app_installations
+
+    org = ensure_personal_org(db, user)
+    synced: list[GitHubInstallation] = []
+    try:
+        remote = list_app_installations(settings)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"GitHub App installations sync failed: {exc}"
+        ) from exc
+
+    for item in remote:
+        existing = db.execute(
+            select(GitHubInstallation)
+            .where(GitHubInstallation.installation_id == item["installation_id"])
+            .limit(1)
+        ).scalar_one_or_none()
+        if existing:
+            existing.account_login = item["account_login"]
+            existing.account_type = item["account_type"]
+            existing.is_mock = False
+            existing.installed_by_user_id = existing.installed_by_user_id or user.id
+            existing.organization_id = existing.organization_id or org.id
+            synced.append(existing)
+        else:
+            row = GitHubInstallation(
+                installation_id=item["installation_id"],
+                account_login=item["account_login"],
+                account_type=item["account_type"],
+                organization_id=org.id,
+                installed_by_user_id=user.id,
+                is_mock=False,
+            )
+            db.add(row)
+            synced.append(row)
+    db.commit()
+    for row in synced:
+        db.refresh(row)
+    return synced
 
 
 def attach_repo_to_project(

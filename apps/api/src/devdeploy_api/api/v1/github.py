@@ -50,11 +50,24 @@ def mock_install(
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> GitHubInstallationOut:
-    if not settings.effective_github_mock:
-        # Still allow mock helper for local demos even if misconfigured
-        pass
+    # Always available for local demos even when a real App is configured.
+    _ = settings
     installation = github_service.create_mock_installation(db, user)
     return GitHubInstallationOut.model_validate(installation)
+
+
+@router.post(
+    "/installations/sync",
+    response_model=list[GitHubInstallationOut],
+)
+def sync_installations(
+    db: DbSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> list[GitHubInstallationOut]:
+    """Sync installations from the real GitHub App (requires App credentials)."""
+    rows = github_service.sync_real_installations(settings, db, user)
+    return [GitHubInstallationOut.model_validate(i) for i in rows]
 
 
 @router.get(
