@@ -242,6 +242,13 @@ export function createMockGitHubInstallation() {
   });
 }
 
+export function syncGitHubInstallations() {
+  return api<GitHubInstallation[]>("/api/v1/github/installations/sync", {
+    method: "POST",
+    body: "{}",
+  });
+}
+
 export function listGitHubRepos(installationId: string) {
   return api<GitHubRepo[]>(
     `/api/v1/github/installations/${installationId}/repos`,

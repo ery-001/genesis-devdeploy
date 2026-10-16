@@ -164,8 +164,11 @@ def sync_real_installations(
             existing.account_login = item["account_login"]
             existing.account_type = item["account_type"]
             existing.is_mock = False
-            existing.installed_by_user_id = existing.installed_by_user_id or user.id
-            existing.organization_id = existing.organization_id or org.id
+            # Re-link to the syncing user so OAuth sign-in users see App installs
+            # (installation_id is unique; earlier syncs by another local user
+            # would otherwise hide them from this session).
+            existing.installed_by_user_id = user.id
+            existing.organization_id = org.id
             synced.append(existing)
         else:
             row = GitHubInstallation(
@@ -181,7 +184,8 @@ def sync_real_installations(
     db.commit()
     for row in synced:
         db.refresh(row)
-    return synced
+    # Return what this user can see after linking (same as GET /installations).
+    return list_installations_for_user(db, user)
 
 
 def attach_repo_to_project(
