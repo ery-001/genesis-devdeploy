@@ -92,7 +92,13 @@ def restore_current_releases(settings: Settings | None = None) -> list[str]:
             summary.append("No current healthy releases to restore")
             return summary
 
+        # Many test projects can share a slug; port-forward/tunnel keys by slug,
+        # so only restore the newest release per slug.
+        seen_slugs: set[str] = set()
         for release, project in rows:
+            if project.slug in seen_slugs:
+                continue
+            seen_slugs.add(project.slug)
             try:
                 access = ensure_app_access(settings, project_slug=project.slug)
                 _apply_access(db, release=release, access=access, settings=settings)

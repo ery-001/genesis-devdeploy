@@ -116,6 +116,63 @@ def _stop_port_forward(slug: str) -> None:
             pass
 
 
+def _free_host_port(host_port: int, logs: list[str]) -> None:
+    """Best-effort: stop an orphan listener left by a previous API process."""
+    if sys.platform == "win32":
+        try:
+            # netstat -ano | findstr :PORT then taskkill — avoid PowerShell dependency.
+            out = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            ).stdout
+        except Exception as exc:  # noqa: BLE001
+            logs.append(f"Could not scan listeners for :{host_port}: {exc}")
+            return
+        needle = f":{host_port} "
+        pids: set[int] = set()
+        for line in out.splitlines():
+            if "LISTENING" not in line.upper() or needle not in line.replace("\t", " "):
+                # Also match ":18150 " with varying spacing
+                if f":{host_port}" not in line or "LISTENING" not in line.upper():
+                    continue
+            parts = line.split()
+            if not parts:
+                continue
+            try:
+                pids.add(int(parts[-1]))
+            except ValueError:
+                continue
+        for pid in pids:
+            if pid <= 0:
+                continue
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                logs.append(f"Freed orphan listener on :{host_port} (pid={pid})")
+            except Exception as exc:  # noqa: BLE001
+                logs.append(f"Could not kill pid {pid} on :{host_port}: {exc}")
+        return
+    # Unix: fuser if available
+    try:
+        subprocess.run(
+            ["fuser", "-k", f"{host_port}/tcp"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def ensure_port_forward(
     settings: Settings, *, namespace: str, service: str, slug: str
 ) -> tuple[int, list[str]]:
@@ -123,6 +180,7 @@ def ensure_port_forward(
     logs: list[str] = []
     host_port = host_port_for_slug(slug)
     _stop_port_forward(slug)
+    _free_host_port(host_port, logs)
 
     cmd = ["kubectl"]
     if settings.k8s_context:
