@@ -128,6 +128,11 @@ class GitHubRepoOut(BaseModel):
     default_branch: str = "main"
 
 
+class GitHubBranchOut(BaseModel):
+    name: str
+    protected: bool = False
+
+
 class AttachRepoRequest(BaseModel):
     installation_id: UUID
     repo_id: int

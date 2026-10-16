@@ -12,6 +12,7 @@ from devdeploy_api.config import Settings, get_settings
 from devdeploy_api.deps import get_current_user, get_db
 from devdeploy_api.models import User
 from devdeploy_api.schemas import (
+    GitHubBranchOut,
     GitHubConfigOut,
     GitHubInstallationOut,
     GitHubRepoOut,
@@ -84,3 +85,26 @@ def list_repos(
         settings, db, user, installation_id
     )
     return [GitHubRepoOut.model_validate(r) for r in repos]
+
+
+@router.get(
+    "/installations/{installation_id}/repos/{owner}/{repo}/branches",
+    response_model=list[GitHubBranchOut],
+)
+def list_repo_branches(
+    installation_id: UUID,
+    owner: str,
+    repo: str,
+    db: DbSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> list[GitHubBranchOut]:
+    branches = github_service.list_branches_for_repo(
+        settings,
+        db,
+        user,
+        installation_id,
+        owner=owner,
+        repo=repo,
+    )
+    return [GitHubBranchOut.model_validate(b) for b in branches]

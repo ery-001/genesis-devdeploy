@@ -255,6 +255,21 @@ export function listGitHubRepos(installationId: string) {
   );
 }
 
+export type GitHubBranch = {
+  name: string;
+  protected: boolean;
+};
+
+export function listGitHubBranches(
+  installationId: string,
+  owner: string,
+  repo: string,
+) {
+  return api<GitHubBranch[]>(
+    `/api/v1/github/installations/${installationId}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches`,
+  );
+}
+
 export function attachGitHubRepo(
   projectId: string,
   body: {
