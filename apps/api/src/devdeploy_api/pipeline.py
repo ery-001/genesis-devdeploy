@@ -340,13 +340,18 @@ def rollback_project(db: DbSession, project_id: uuid.UUID) -> Release:
 
     project = db.get(Project, project_id)
     workload_logs: list[str] = []
+    access: k8s_engine.AccessResult | None = None
     if project and previous.image_tag:
         try:
-            workload_logs = k8s_engine.rollback_workload(
+            access = k8s_engine.rollback_workload(
                 settings,
                 project_slug=project.slug,
                 image_tag=previous.image_tag,
             )
+            workload_logs = access.logs
+            previous.app_url = access.app_url
+            if access.public_url:
+                previous.public_url = access.public_url
         except Exception as exc:  # noqa: BLE001
             raise ValueError(f"Workload rollback failed: {exc}") from exc
 

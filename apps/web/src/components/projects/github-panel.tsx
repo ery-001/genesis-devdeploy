@@ -690,8 +690,9 @@ export function GitHubPanel({
                   </p>
                 ) : r.is_current ? (
                   <p className="font-mono text-[11px] text-muted-foreground">
-                    No public share URL (tunnel disabled or unavailable). Local
-                    URL still works.
+                    No public share URL (tunnel disabled, cloudflared missing, or
+                    tunnel failed — check deploy logs). Local URL should still
+                    work when the API port-forward is up.
                   </p>
                 ) : null}
               </li>
