@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from devdeploy_api import github_service, pipeline
+from devdeploy_api.access_restore import restore_project_access
 from devdeploy_api.deps import get_current_user, get_db
 from devdeploy_api.models import DeploymentJob, Release, User
 from devdeploy_api.project_service import get_project_for_user
@@ -89,6 +90,29 @@ def rollback(
         release = pipeline.rollback_project(db, project_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ReleaseOut.model_validate(release)
+
+
+@router.post("/projects/{project_id}/access/restore", response_model=ReleaseOut)
+def restore_access(
+    project_id: UUID,
+    db: DbSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ReleaseOut:
+    """Re-attach local port-forward + public tunnel without a full redeploy."""
+    get_project_for_user(db, user, project_id)
+    try:
+        restore_project_access(db, project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    release = db.execute(
+        select(Release)
+        .where(Release.project_id == project_id)
+        .where(Release.is_current.is_(True))
+        .limit(1)
+    ).scalar_one_or_none()
+    if release is None:
+        raise HTTPException(status_code=404, detail="No current release")
     return ReleaseOut.model_validate(release)
 
 
