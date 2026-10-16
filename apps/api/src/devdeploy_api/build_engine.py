@@ -236,11 +236,17 @@ def build_and_publish(
 
 
 def kind_load_image(image_tag: str, cluster_name: str) -> list[str]:
-    """Load a local image into kind so pods can use imagePullPolicy: Never/IfNotPresent."""
+    """Load a local image into kind so pods can use imagePullPolicy: Never/IfNotPresent.
+
+    Raises if the kind CLI is missing or load fails — callers that run with
+    K8S_MOCK_MODE=false need the image on the node (registry push is optional).
+    """
     lines: list[str] = []
     if shutil.which("kind") is None:
-        lines.append("kind CLI not found — skip kind load")
-        return lines
+        raise RuntimeError(
+            "kind CLI not found on PATH. Install kind "
+            "(https://kind.sigs.k8s.io/) or set K8S_MOCK_MODE=true."
+        )
     code, out = _run(["kind", "load", "docker-image", image_tag, "--name", cluster_name])
     lines.append(f"$ kind load docker-image {image_tag} --name {cluster_name}")
     lines.extend((out or "").splitlines()[-30:])

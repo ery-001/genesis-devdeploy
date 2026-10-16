@@ -68,7 +68,8 @@ class Settings(BaseSettings):
     eks_cluster_name: str = ""
 
     # Local image registry + kind
-    local_registry: str = "localhost:5001"
+    # Prefer 127.0.0.1 over localhost on Windows (avoids [::1]:5001 push timeouts).
+    local_registry: str = "127.0.0.1:5001"
     kind_cluster_name: str = "devdeploy"
     k8s_context: str = "kind-devdeploy"
     k8s_ingress_host_port: int = 8088

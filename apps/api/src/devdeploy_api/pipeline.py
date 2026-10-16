@@ -114,7 +114,8 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
         job.image_tag = build.image_tag
         db.commit()
 
-        # Load local tag into kind so imagePullPolicy: IfNotPresent works offline
+        # Load local tag into kind so imagePullPolicy: IfNotPresent works offline.
+        # Required when K8S_MOCK_MODE=false (registry push alone is not enough on kind).
         if not k8s_engine.effective_k8s_mock(settings) and not build.mocked:
             try:
                 local_short = f"devdeploy/{project.slug}:{str(job.id)[:8]}"
@@ -127,8 +128,14 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
                 job.image_tag = local_short
                 db.commit()
             except Exception as exc:  # noqa: BLE001
-                _append_log(job, f"kind load warning: {exc}")
-                db.commit()
+                _set_status(db, job, "failed", f"kind load failed: {exc}")
+                if prior:
+                    _append_log(
+                        job,
+                        f"Prior healthy release retained: {prior.image_digest[:19]}…",
+                    )
+                    db.commit()
+                return job
 
         _set_status(db, job, "deploying", "Applying workload-plane manifests")
         time.sleep(step_delay)
