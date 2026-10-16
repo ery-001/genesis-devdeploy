@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     public_tunnel_provider: str = "cloudflared"  # cloudflared | ngrok
     ngrok_authtoken: str = ""
 
+    # Encrypt project secrets at rest (falls back to session_secret when empty).
+    secrets_encryption_key: str = ""
+
+    # Multi-cloud / HA commercial toggles (disabled locally unless explicitly on).
+    multi_cloud_enabled: bool = False
+    ha_enabled: bool = False
+
     @property
     def github_app_configured(self) -> bool:
         return bool(

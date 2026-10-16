@@ -36,6 +36,7 @@ migrate:
 install:
 	cd apps/api && uv sync
 	cd apps/web && npm install
+	cd apps/cli && uv sync
 
 test:
 	cd apps/api && uv run pytest -q

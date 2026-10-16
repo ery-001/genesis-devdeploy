@@ -23,11 +23,13 @@ router = APIRouter(prefix="/github", tags=["github"])
 
 @router.get("/config", response_model=GitHubConfigOut)
 def github_config(settings: Settings = Depends(get_settings)) -> GitHubConfigOut:
+    callback = f"{settings.api_public_url.rstrip('/')}/api/v1/webhooks/github"
     return GitHubConfigOut(
         mock_mode=settings.effective_github_mock,
         app_configured=settings.github_app_configured,
         app_slug=settings.github_app_slug,
         install_url=github_service.install_url(settings),
+        webhook_callback_hint=callback,
     )
 
 

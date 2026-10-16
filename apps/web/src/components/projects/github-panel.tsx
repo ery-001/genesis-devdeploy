@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
   attachGitHubRepo,
+  cancelDeployment,
   createMockGitHubInstallation,
   deployProject,
   fetchGitHubConfig,
@@ -51,6 +53,7 @@ export function GitHubPanel({
   const [releases, setReleases] = useState<Release[]>([]);
   const [metrics, setMetrics] = useState<ProjectMetrics | null>(null);
   const [selectedJob, setSelectedJob] = useState<DeploymentJob | null>(null);
+  const [environment, setEnvironment] = useState("development");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -262,11 +265,12 @@ export function GitHubPanel({
     try {
       const job = await deployProject(project.id, {
         simulate_failure: simulateFailure,
+        environment,
       });
       setInfo(
         simulateFailure
           ? `Simulated failure — prior release retained (${job.status})`
-          : `Deployment ${job.status}${job.app_url ? ` · ${job.app_url}` : ""}${job.public_url ? ` · share ${job.public_url}` : ""}`,
+          : `Deployment ${job.status} → ${environment}${job.app_url ? ` · ${job.app_url}` : ""}${job.public_url ? ` · share ${job.public_url}` : ""}`,
       );
       setSelectedJob(job);
       refreshDeployments();
@@ -311,6 +315,13 @@ export function GitHubPanel({
                 ? " Mock mode is on (no real App credentials required)."
                 : null}
             </p>
+            {config?.webhook_callback_hint ? (
+              <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+                Webhook callback: {config.webhook_callback_hint}
+                {" — "}use shareable-demo / cloudflared HTTPS URL when GitHub
+                cannot reach localhost.
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
             {config && !config.mock_mode && config.app_configured ? (
@@ -556,6 +567,21 @@ export function GitHubPanel({
               )}
             </select>
           </div>
+          <div className="min-w-[10rem] space-y-2">
+            <Label htmlFor="deploy-env">Environment</Label>
+            <select
+              id="deploy-env"
+              className="h-10 w-full rounded-md border border-border bg-white/70 px-3 font-mono text-sm"
+              value={environment}
+              onChange={(e) => setEnvironment(e.target.value)}
+            >
+              {["development", "staging", "production"].map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+          </div>
           <Button
             variant="outline"
             disabled={busy || !project.github_repo_full_name || branches.length === 0}
@@ -690,27 +716,66 @@ export function GitHubPanel({
         ) : (
           <ul className="divide-y divide-border/60 border border-border/50">
             {deployments.map((job) => (
-              <li key={job.id}>
-                <button
-                  type="button"
-                  className="w-full px-4 py-3 text-left text-sm hover:bg-white/50"
-                  onClick={() => setSelectedJob(job)}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+              <li key={job.id} className="px-4 py-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    className="text-left hover:underline"
+                    onClick={() => setSelectedJob(job)}
+                  >
                     <span className="font-mono text-xs text-ink">
                       {job.id.slice(0, 8)}
                     </span>
-                    <span className="rounded bg-ink/5 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-ink">
+                    <span className="ml-2 rounded bg-ink/5 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-ink">
                       {job.status}
                     </span>
+                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <Link
+                      href={`/deployments/${job.id}?project=${project.id}`}
+                      className="font-mono text-[11px] text-signal underline-offset-2 hover:underline"
+                    >
+                      Open
+                    </Link>
+                    {["queued", "building", "publishing", "deploying", "pending_approval"].includes(
+                      job.status,
+                    ) ? (
+                      <button
+                        type="button"
+                        className="font-mono text-[11px] text-destructive underline-offset-2 hover:underline"
+                        disabled={busy}
+                        onClick={async () => {
+                          setBusy(true);
+                          try {
+                            const cancelled = await cancelDeployment(
+                              project.id,
+                              job.id,
+                            );
+                            setSelectedJob(cancelled);
+                            refreshDeployments();
+                          } catch (err) {
+                            setError(
+                              err instanceof Error
+                                ? err.message
+                                : "Cancel failed",
+                            );
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    ) : null}
                   </div>
-                  <p className="mt-1 text-muted-foreground">
-                    {job.trigger} · {job.git_ref ?? "—"}
-                    {job.image_digest
-                      ? ` · ${job.image_digest.slice(0, 15)}…`
-                      : ""}
-                  </p>
-                </button>
+                </div>
+                <p className="mt-1 text-muted-foreground">
+                  {job.trigger} · {job.environment_name || "development"} ·{" "}
+                  {job.git_ref ?? "—"}
+                  {job.image_digest
+                    ? ` · ${job.image_digest.slice(0, 15)}…`
+                    : ""}
+                </p>
               </li>
             ))}
           </ul>

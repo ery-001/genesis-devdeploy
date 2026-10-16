@@ -146,9 +146,55 @@ Lifecycle: `queued → building → publishing → deploying → succeeded|faile
 4. Rollback to previous digest  
 5. Metrics panel on project page  
 
+## Feature checklist
+
+### Version 1 (local Docker + kind) — implemented
+
+- [x] GitHub sign-in + GitHub App repo attach
+- [x] Project settings: Dockerfile, port, health path, CPU/memory, replicas, auto_deploy
+- [x] Manual Deploy + auto-deploy on push (HMAC verify + dedupe); webhook callback shown in UI (`API_PUBLIC_URL` / shareable-demo / cloudflared)
+- [x] Build logs, deployment history, cancel in-progress job
+- [x] Redeploy + rollback
+- [x] App URLs (local port-forward + optional public tunnel)
+- [x] Metrics with time series (release-derived uptime + synthetic series)
+- [x] `devdeploy.yaml` validate + apply
+- [x] Env vars / secrets UI (Fernet encrypt at rest; secrets never logged)
+- [x] Routes: `/` `/login` `/dashboard` `/projects` `/projects/new` `/projects/[id]` `/deployments/[id]` `/projects/[id]/metrics` `/settings` `/variables`
+- [x] Expanded API tests; sample app + `devdeploy.yaml`
+
+### Version 2 (local-real)
+
+- [x] Environments: development / staging / production
+- [x] Teams / roles (owner, admin, developer, viewer) with API enforcement
+- [x] Production deployment approvals
+- [x] Horizontal replicas applied to k8s manifests
+- [x] Live app logs (`kubectl logs` or mock)
+- [x] Notifications (email stub log + webhook POST)
+- [x] Monitoring page with Recharts
+- [x] Vulnerability scanning (Trivy if installed, else mock report hook)
+- [x] Resource quotas display
+
+### Version 3 (durable stubs)
+
+- [x] Preview environments (API + UI stub)
+- [x] Usage/billing meters stub
+- [x] Managed DB / buildpacks / autoscaling / tracing stubs + disabled multi-cloud/HA toggles
+- [x] Deployment analytics page data
+- [x] Org audit log (real table + UI)
+- [x] API keys + CLI (`apps/cli`: `devdeploy login` / `deploy`)
+
+## CLI
+
+```bash
+cd apps/cli && uv sync
+# Create a key in Settings → API keys, then:
+uv run devdeploy login --token dd_…
+uv run devdeploy deploy <project-id> --environment development
+```
+
 ## Current milestone
 
-**Real local infra:** Docker builds + kind Deployment/Service/Ingress when tools are present; GitHub App mock by default (real JWT/installation-token path when configured); AWS Terraform plan-ready without paid apply.
+**V1 complete + V2 local-real + V3 stubs.** Prefer Dockerfile HTTP apps; keep `AWS_MOCK_MODE=true` unless you intentionally spend.
 
 ## License
 

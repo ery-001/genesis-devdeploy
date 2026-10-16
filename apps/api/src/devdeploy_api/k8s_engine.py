@@ -143,13 +143,33 @@ def _cleanup_forwards() -> None:
 atexit.register(_cleanup_forwards)
 
 
+def _env_yaml(env: dict[str, str] | None) -> str:
+    if not env:
+        return ""
+    lines = ["          env:"]
+    for key, value in env.items():
+        # Values are injected from decrypted secrets; never echo in logs elsewhere.
+        safe_val = value.replace('"', '\\"')
+        lines.append(f'            - name: {key}')
+        lines.append(f'              value: "{safe_val}"')
+    return "\n".join(lines) + "\n"
+
+
 def render_manifests(
     *,
     project_slug: str,
     namespace: str,
     image: str,
     container_port: int = 8000,
+    health_path: str = "/health",
+    replicas: int = 1,
+    cpu_request: str = "100m",
+    memory_request: str = "128Mi",
+    cpu_limit: str = "500m",
+    memory_limit: str = "512Mi",
+    env: dict[str, str] | None = None,
 ) -> str:
+    env_block = _env_yaml(env)
     return f"""apiVersion: v1
 kind: Namespace
 metadata:
@@ -164,7 +184,7 @@ metadata:
     app: {project_slug}
     managed-by: devdeploy
 spec:
-  replicas: 1
+  replicas: {max(1, replicas)}
   selector:
     matchLabels:
       app: {project_slug}
@@ -179,15 +199,22 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: {container_port}
+{env_block}          resources:
+            requests:
+              cpu: {cpu_request}
+              memory: {memory_request}
+            limits:
+              cpu: {cpu_limit}
+              memory: {memory_limit}
           readinessProbe:
             httpGet:
-              path: /health
+              path: {health_path}
               port: {container_port}
             initialDelaySeconds: 2
             periodSeconds: 5
           livenessProbe:
             httpGet:
-              path: /health
+              path: {health_path}
               port: {container_port}
             initialDelaySeconds: 5
             periodSeconds: 10
@@ -214,19 +241,32 @@ def deploy_to_cluster(
     project_slug: str,
     image_tag: str,
     image_digest: str,
+    container_port: int | None = None,
+    health_path: str = "/health",
+    replicas: int = 1,
+    cpu_request: str = "100m",
+    memory_request: str = "128Mi",
+    cpu_limit: str = "500m",
+    memory_limit: str = "512Mi",
+    env: dict[str, str] | None = None,
 ) -> DeployResult:
     namespace = f"dd-{project_slug}"[:63]
     host = f"{project_slug}.apps.devdeploy.local"
     image_ref = image_tag
+    port = container_port or settings.workload_container_port
     manifests_meta = [
-        ("Deployment", project_slug, {"image": image_ref, "replicas": 1}),
+        (
+            "Deployment",
+            project_slug,
+            {"image": image_ref, "replicas": max(1, replicas), "port": port},
+        ),
         ("Service", f"{project_slug}-svc", {"port": 80, "type": "ClusterIP"}),
     ]
 
     if effective_k8s_mock(settings):
         logs = [
             "Using mock Kubernetes controller (K8S_MOCK_MODE=true)",
-            f"Would apply Deployment/Service in {namespace}",
+            f"Would apply Deployment/Service in {namespace} (replicas={replicas})",
             f"App URL (mock): https://{host}",
         ]
         return DeployResult(
@@ -251,7 +291,14 @@ def deploy_to_cluster(
         project_slug=project_slug,
         namespace=namespace,
         image=image_ref,
-        container_port=settings.workload_container_port,
+        container_port=port,
+        health_path=health_path,
+        replicas=replicas,
+        cpu_request=cpu_request,
+        memory_request=memory_request,
+        cpu_limit=cpu_limit,
+        memory_limit=memory_limit,
+        env=env,
     )
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
         fh.write(yaml_text)
@@ -313,6 +360,38 @@ def deploy_to_cluster(
         )
     finally:
         Path(manifest_path).unlink(missing_ok=True)
+
+
+def fetch_pod_logs(
+    settings: Settings,
+    *,
+    project_slug: str,
+    tail: int = 200,
+) -> tuple[list[str], str]:
+    """Return recent application logs (kubectl or synthetic mock)."""
+    namespace = f"dd-{project_slug}"[:63]
+    if effective_k8s_mock(settings) or not kubectl_available(settings):
+        return (
+            [
+                f"[mock] Waiting for traffic on {project_slug}",
+                f"[mock] GET {settings.workload_container_port}/health → 200",
+                "[mock] Deploy pipeline completed; attach a real cluster for live logs",
+            ],
+            "mock",
+        )
+    code, out = _kubectl(
+        settings,
+        "-n",
+        namespace,
+        "logs",
+        f"deploy/{project_slug}",
+        f"--tail={tail}",
+        "--all-containers=true",
+    )
+    if code != 0:
+        return ([f"kubectl logs failed: {out.strip()}"], "kubectl-error")
+    lines = [ln for ln in (out or "").splitlines() if ln.strip()]
+    return (lines[-tail:], "kubectl")
 
 
 def rollback_workload(

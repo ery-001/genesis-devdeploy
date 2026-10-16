@@ -7,6 +7,13 @@ import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { logout, type AuthUser } from "@/lib/api";
 
+const NAV = [
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/projects", label: "Projects" },
+  { href: "/settings", label: "Settings" },
+  { href: "/variables", label: "Variables" },
+];
+
 export function AppShell({
   user,
   children,
@@ -38,18 +45,15 @@ export function AppShell({
               DevDeploy
             </Link>
             <nav className="hidden items-center gap-4 text-sm sm:flex">
-              <Link
-                href="/dashboard"
-                className="text-muted-foreground transition-colors hover:text-ink"
-              >
-                Dashboard
-              </Link>
-              <Link
-                href="/projects"
-                className="text-muted-foreground transition-colors hover:text-ink"
-              >
-                Projects
-              </Link>
+              {NAV.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="text-muted-foreground transition-colors hover:text-ink"
+                >
+                  {item.label}
+                </Link>
+              ))}
             </nav>
           </div>
           <div className="flex items-center gap-3">

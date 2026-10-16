@@ -24,6 +24,8 @@ os.environ["BUILD_MOCK_MODE"] = "true"
 os.environ["K8S_MOCK_MODE"] = "true"
 os.environ["AWS_MOCK_MODE"] = "true"
 os.environ["GITHUB_MOCK_MODE"] = "true"
+# TestClient is HTTP — Secure cookies would not be sent.
+os.environ["SESSION_COOKIE_SECURE"] = "false"
 get_settings.cache_clear()
 
 settings = get_settings()
@@ -176,7 +178,7 @@ def test_metrics_endpoint(client: TestClient):
     _auth(client)
     pid = _project_with_repo(client)
     m = client.get(f"/api/v1/projects/{pid}/metrics").json()
-    assert m["source"] == "mock"
+    assert m["source"] in ("mock", "synthetic", "release-derived")
     assert m["cpu_percent"] >= 0
 
 
