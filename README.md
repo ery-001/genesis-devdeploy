@@ -60,12 +60,16 @@ DevDeploy uses **FastAPI-owned httpOnly session cookies** (not NextAuth/Auth.js)
 | Email + password | `POST /api/v1/auth/register` and `/login` |
 | Email magic link | Request token → verify (email delivery stubbed; token returned in mock mode) |
 | Phone SMS OTP | Start → verify (`AUTH_MOCK_MODE` uses code `000000` by default) |
-| Google / GitHub / Apple / Microsoft | `/api/v1/auth/oauth/{provider}/start` → callback |
+| Google / GitHub / Apple / Microsoft | `/api/v1/auth/oauth/{provider}/start` → API callback |
 
 - Sessions are stored in Postgres (`sessions` table); cookie name defaults to `devdeploy_session`.
 - Users can link multiple providers (`auth_identities`); email/phone are unique when present.
 - **`AUTH_MOCK_MODE=true` (default)** makes OAuth and SMS demonstrable without real credentials.
-- **GitHub App repository install** is intentionally separate from user sign-in.
+- **`AUTH_MOCK_MODE=false`** uses real OAuth. GitHub login reuses `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET` when `GITHUB_CLIENT_*` are empty. Unconfigured providers show as disabled in the UI (no silent mock).
+- Register this **Callback URL** in each provider console (local):  
+  `http://127.0.0.1:8741/api/v1/auth/oauth/<provider>/callback`  
+  (`github`, `google`, `apple`, `microsoft`). Apple uses `form_post` (POST callback).
+- **GitHub App repository install** is intentionally separate from user sign-in — connecting Google/email/etc. does not list repos until the App is installed.
 
 Web pages: `/login`, `/signup`. `/dashboard` requires a session (client checks `GET /api/v1/auth/me`).
 

@@ -17,10 +17,18 @@ export default function DashboardPage() {
 
   return (
     <AppShell user={user}>
-      <ProjectList
-        title="Dashboard"
-        subtitle="Your DevDeploy control plane — projects you can configure and deploy."
-      />
+      <div className="space-y-6">
+        <p className="rounded-md border border-border/70 bg-white/40 px-4 py-3 text-sm text-muted-foreground">
+          Account sign-in (email, Google, GitHub login, Apple, Microsoft) is
+          separate from repository access. Open a project and install or connect
+          the <span className="font-medium text-ink">GitHub App</span> to list
+          and attach repos.
+        </p>
+        <ProjectList
+          title="Dashboard"
+          subtitle="Your DevDeploy control plane — projects you can configure and deploy."
+        />
+      </div>
     </AppShell>
   );
 }

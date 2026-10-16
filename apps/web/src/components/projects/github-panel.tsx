@@ -16,6 +16,7 @@ import {
   listGitHubRepos,
   listReleases,
   rollbackProject,
+  syncGitHubInstallations,
   updateProject,
   type DeploymentJob,
   type GitHubConfig,
@@ -111,6 +112,31 @@ export function GitHubPanel({
     }
   }
 
+  async function onSyncInstallations() {
+    setBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const items = await syncGitHubInstallations();
+      setInstallations(items);
+      if (items[0]) {
+        setSelectedInstall(items[0].id);
+        setInfo(
+          `Synced ${items.length} installation${items.length === 1 ? "" : "s"}`,
+        );
+      } else {
+        setSelectedInstall("");
+        setInfo(null);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to sync installations",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onAttach(repo: GitHubRepo) {
     if (!selectedInstall) return;
     setBusy(true);
@@ -196,30 +222,50 @@ export function GitHubPanel({
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Repo access uses a GitHub App installation — separate from user
-              sign-in.
+              sign-in. Signing in with Google, email, phone, Apple, or Microsoft
+              does not grant repository access; install or connect this GitHub
+              App to list and attach repos.
               {config?.mock_mode
                 ? " Mock mode is on (no real App credentials required)."
                 : null}
             </p>
           </div>
-          {config?.mock_mode || !config?.app_configured ? (
-            <Button
-              onClick={onMockConnect}
-              disabled={busy}
-              className="h-10 bg-signal text-signal-foreground hover:bg-signal/90"
-            >
-              {busy ? "Working…" : "Connect mock GitHub App"}
-            </Button>
-          ) : config.install_url ? (
-            <Button
-              render={
-                <a href={config.install_url} target="_blank" rel="noreferrer" />
-              }
-              className="h-10 bg-signal text-signal-foreground hover:bg-signal/90"
-            >
-              Install GitHub App
-            </Button>
-          ) : null}
+          <div className="flex flex-wrap gap-2">
+            {config && !config.mock_mode && config.app_configured ? (
+              <>
+                <Button
+                  onClick={onSyncInstallations}
+                  disabled={busy}
+                  className="h-10 bg-signal text-signal-foreground hover:bg-signal/90"
+                >
+                  {busy ? "Working…" : "Sync / Refresh installations"}
+                </Button>
+                {config.install_url ? (
+                  <Button
+                    variant="outline"
+                    render={
+                      <a
+                        href={config.install_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      />
+                    }
+                    className="h-10"
+                  >
+                    Install GitHub App
+                  </Button>
+                ) : null}
+              </>
+            ) : (
+              <Button
+                onClick={onMockConnect}
+                disabled={busy}
+                className="h-10 bg-signal text-signal-foreground hover:bg-signal/90"
+              >
+                {busy ? "Working…" : "Connect mock GitHub App"}
+              </Button>
+            )}
+          </div>
         </div>
 
         {error ? (
@@ -252,9 +298,44 @@ export function GitHubPanel({
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No installations yet. Use the mock connect button for local demos.
+            {config && !config.mock_mode && config.app_configured ? (
+              <>
+                No installations linked to your account yet. Install the GitHub
+                App on your user or org
+                {config.install_url ? (
+                  <>
+                    {" "}
+                    (
+                    <a
+                      className="underline underline-offset-2"
+                      href={config.install_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      open install page
+                    </a>
+                    )
+                  </>
+                ) : null}
+                , then click <span className="font-medium text-ink">Sync / Refresh installations</span>.
+                Signing in alone does not grant repo access.
+              </>
+            ) : (
+              <>
+                No installations yet. Use <span className="font-medium text-ink">Connect mock GitHub App</span>{" "}
+                for local demos, or configure a real GitHub App and set{" "}
+                <span className="font-mono text-xs">GITHUB_MOCK_MODE=false</span>.
+              </>
+            )}
           </p>
         )}
+
+        {selectedInstall && repos.length === 0 && installations.length > 0 ? (
+          <p className="text-sm text-muted-foreground">
+            This installation has no repositories visible to the App. Check App
+            repository access on GitHub, then Sync again.
+          </p>
+        ) : null}
 
         {repos.length > 0 ? (
           <ul className="divide-y divide-border/70 border border-border/60">
@@ -281,6 +362,20 @@ export function GitHubPanel({
               </li>
             ))}
           </ul>
+        ) : null}
+
+        {config && !config.mock_mode && config.app_configured ? (
+          <p className="font-mono text-[11px] text-muted-foreground">
+            Demo-only:{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2"
+              disabled={busy}
+              onClick={onMockConnect}
+            >
+              connect mock installation
+            </button>
+          </p>
         ) : null}
       </section>
 

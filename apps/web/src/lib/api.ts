@@ -9,9 +9,17 @@ export type AuthUser = {
   providers: string[];
 };
 
+export type OAuthProviderStatus = {
+  id: string;
+  configured: boolean;
+  enabled: boolean;
+  callback_url: string;
+};
+
 export type AuthConfig = {
   mock_mode: boolean;
   providers: string[];
+  oauth_providers?: OAuthProviderStatus[];
   session_cookie: string;
 };
 
@@ -229,6 +237,13 @@ export function listGitHubInstallations() {
 
 export function createMockGitHubInstallation() {
   return api<GitHubInstallation>("/api/v1/github/installations/mock", {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export function syncGitHubInstallations() {
+  return api<GitHubInstallation[]>("/api/v1/github/installations/sync", {
     method: "POST",
     body: "{}",
   });
