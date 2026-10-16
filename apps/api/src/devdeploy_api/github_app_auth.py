@@ -85,6 +85,42 @@ def list_installation_repos(settings: Settings, installation_id: int) -> list[di
     return repos
 
 
+def list_repo_branches(
+    settings: Settings, installation_id: int, owner: str, repo: str
+) -> list[dict]:
+    """List branches for a repository via an installation token."""
+    tok = create_installation_token(settings, installation_id)
+    access = tok["token"]
+    headers = {
+        "Authorization": f"Bearer {access}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    branches: list[dict] = []
+    url: str | None = (
+        f"https://api.github.com/repos/{owner}/{repo}/branches?per_page=100"
+    )
+    with httpx.Client(timeout=30.0) as client:
+        while url:
+            r = client.get(url, headers=headers)
+            r.raise_for_status()
+            for branch in r.json():
+                if isinstance(branch, dict) and branch.get("name"):
+                    branches.append(
+                        {
+                            "name": branch["name"],
+                            "protected": bool(branch.get("protected")),
+                        }
+                    )
+            link = r.headers.get("link") or ""
+            next_url = None
+            for part in link.split(","):
+                if 'rel="next"' in part:
+                    next_url = part[part.find("<") + 1 : part.find(">")]
+            url = next_url
+    return branches
+
+
 def list_app_installations(settings: Settings) -> list[dict]:
     """GET /app/installations — requires App JWT."""
     token = create_app_jwt(settings)

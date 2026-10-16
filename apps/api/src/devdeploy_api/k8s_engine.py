@@ -28,6 +28,7 @@ class DeployResult:
     logs: list[str] = field(default_factory=list)
     mocked: bool = False
     status: str = "applied"
+    public_url: str | None = None
 
 
 def kubectl_available(settings: Settings) -> bool:
@@ -286,6 +287,21 @@ def deploy_to_cluster(
         logs.extend(pf_logs)
         app_url = f"http://127.0.0.1:{host_port}/"
         logs.append(f"Rollout healthy at {app_url}")
+
+        public_url: str | None = None
+        try:
+            from devdeploy_api.tunnel import start_public_tunnel
+
+            tunnel = start_public_tunnel(
+                settings, local_url=app_url, slug=project_slug
+            )
+            logs.extend(tunnel.logs)
+            public_url = tunnel.public_url
+            if public_url:
+                logs.append(f"Shareable public URL: {public_url}")
+        except Exception as exc:  # noqa: BLE001 — tunnel is best-effort
+            logs.append(f"Public tunnel failed (local URL still works): {exc}")
+
         return DeployResult(
             app_url=app_url,
             namespace=namespace,
@@ -293,6 +309,7 @@ def deploy_to_cluster(
             logs=logs,
             mocked=False,
             status="applied",
+            public_url=public_url,
         )
     finally:
         Path(manifest_path).unlink(missing_ok=True)

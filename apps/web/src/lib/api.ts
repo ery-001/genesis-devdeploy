@@ -178,6 +178,7 @@ export type DeploymentJob = {
   image_digest: string | null;
   image_tag: string | null;
   app_url: string | null;
+  public_url?: string | null;
   simulate_failure: boolean;
   created_at: string;
   updated_at: string;
@@ -190,6 +191,7 @@ export type Release = {
   image_digest: string;
   image_tag: string | null;
   app_url: string | null;
+  public_url?: string | null;
   status: string;
   is_current: boolean;
   created_at: string;
@@ -252,6 +254,21 @@ export function syncGitHubInstallations() {
 export function listGitHubRepos(installationId: string) {
   return api<GitHubRepo[]>(
     `/api/v1/github/installations/${installationId}/repos`,
+  );
+}
+
+export type GitHubBranch = {
+  name: string;
+  protected: boolean;
+};
+
+export function listGitHubBranches(
+  installationId: string,
+  owner: string,
+  repo: string,
+) {
+  return api<GitHubBranch[]>(
+    `/api/v1/github/installations/${installationId}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches`,
   );
 }
 

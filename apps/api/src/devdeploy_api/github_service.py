@@ -134,6 +134,37 @@ def list_repos_for_installation(
         ) from exc
 
 
+MOCK_BRANCHES = [
+    {"name": "main", "protected": True},
+    {"name": "develop", "protected": False},
+]
+
+
+def list_branches_for_repo(
+    settings: Settings,
+    db: DbSession,
+    user: User,
+    installation_uuid: uuid.UUID,
+    *,
+    owner: str,
+    repo: str,
+) -> list[dict[str, Any]]:
+    installation = get_installation_for_user(db, user, installation_uuid)
+    if settings.effective_github_mock or installation.is_mock:
+        return list(MOCK_BRANCHES)
+    try:
+        from devdeploy_api.github_app_auth import list_repo_branches
+
+        return list_repo_branches(
+            settings, installation.installation_id, owner, repo
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub App branch listing failed: {exc}",
+        ) from exc
+
+
 def sync_real_installations(
     settings: Settings, db: DbSession, user: User
 ) -> list[GitHubInstallation]:

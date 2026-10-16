@@ -128,6 +128,11 @@ class GitHubRepoOut(BaseModel):
     default_branch: str = "main"
 
 
+class GitHubBranchOut(BaseModel):
+    name: str
+    protected: bool = False
+
+
 class AttachRepoRequest(BaseModel):
     installation_id: UUID
     repo_id: int
@@ -149,6 +154,7 @@ class DeploymentJobOut(BaseModel):
     image_digest: str | None = None
     image_tag: str | None = None
     app_url: str | None = None
+    public_url: str | None = None
     simulate_failure: bool = False
     created_at: datetime
     updated_at: datetime
@@ -167,6 +173,7 @@ class ReleaseOut(BaseModel):
     image_digest: str
     image_tag: str | None = None
     app_url: str | None = None
+    public_url: str | None = None
     status: str
     is_current: bool
     created_at: datetime

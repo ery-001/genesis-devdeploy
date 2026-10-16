@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   attachGitHubRepo,
@@ -12,6 +11,7 @@ import {
   fetchGitHubConfig,
   fetchProjectMetrics,
   listDeployments,
+  listGitHubBranches,
   listGitHubInstallations,
   listGitHubRepos,
   listReleases,
@@ -19,6 +19,7 @@ import {
   syncGitHubInstallations,
   updateProject,
   type DeploymentJob,
+  type GitHubBranch,
   type GitHubConfig,
   type GitHubInstallation,
   type GitHubRepo,
@@ -26,6 +27,8 @@ import {
   type ProjectMetrics,
   type Release,
 } from "@/lib/api";
+
+const REPO_PAGE_SIZE = 10;
 
 export function GitHubPanel({
   project,
@@ -37,7 +40,10 @@ export function GitHubPanel({
   const [config, setConfig] = useState<GitHubConfig | null>(null);
   const [installations, setInstallations] = useState<GitHubInstallation[]>([]);
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
+  const [repoVisibleCount, setRepoVisibleCount] = useState(REPO_PAGE_SIZE);
+  const [repoPickerOpen, setRepoPickerOpen] = useState(true);
   const [selectedInstall, setSelectedInstall] = useState<string>("");
+  const [branches, setBranches] = useState<GitHubBranch[]>([]);
   const [deployBranch, setDeployBranch] = useState(
     project.deploy_branch || project.default_branch || "main",
   );
@@ -48,6 +54,12 @@ export function GitHubPanel({
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const visibleRepos = useMemo(
+    () => repos.slice(0, repoVisibleCount),
+    [repos, repoVisibleCount],
+  );
+  const hasMoreRepos = repoVisibleCount < repos.length;
 
   const refreshDeployments = useCallback(() => {
     listDeployments(project.id)
@@ -69,6 +81,38 @@ export function GitHubPanel({
       .catch(() => setInstallations([]));
   }, [selectedInstall]);
 
+  const loadBranches = useCallback(
+    async (installationId: string, fullName: string, preferred?: string | null) => {
+      const [owner, repo] = fullName.split("/");
+      if (!owner || !repo) {
+        setBranches([]);
+        return;
+      }
+      try {
+        const rows = await listGitHubBranches(installationId, owner, repo);
+        setBranches(rows);
+        const names = rows.map((b) => b.name);
+        const initial =
+          (preferred && names.includes(preferred) && preferred) ||
+          (project.deploy_branch &&
+            names.includes(project.deploy_branch) &&
+            project.deploy_branch) ||
+          (project.default_branch &&
+            names.includes(project.default_branch) &&
+            project.default_branch) ||
+          names[0] ||
+          "main";
+        setDeployBranch(initial);
+      } catch (err) {
+        setBranches([]);
+        setError(
+          err instanceof Error ? err.message : "Failed to list branches",
+        );
+      }
+    },
+    [project.default_branch, project.deploy_branch],
+  );
+
   useEffect(() => {
     fetchGitHubConfig()
       .then(setConfig)
@@ -87,8 +131,11 @@ export function GitHubPanel({
   useEffect(() => {
     if (!selectedInstall) {
       setRepos([]);
+      setRepoVisibleCount(REPO_PAGE_SIZE);
       return;
     }
+    setRepoVisibleCount(REPO_PAGE_SIZE);
+    setRepoPickerOpen(true);
     listGitHubRepos(selectedInstall)
       .then(setRepos)
       .catch((err: unknown) => {
@@ -96,6 +143,30 @@ export function GitHubPanel({
         setRepos([]);
       });
   }, [selectedInstall]);
+
+  const fallbackInstallId = installations[0]?.id ?? "";
+
+  useEffect(() => {
+    const installId =
+      selectedInstall || project.github_installation_id || fallbackInstallId;
+    if (!installId || !project.github_repo_full_name) {
+      if (!project.github_repo_full_name) setBranches([]);
+      return;
+    }
+    void loadBranches(
+      installId,
+      project.github_repo_full_name,
+      project.deploy_branch || project.default_branch,
+    );
+  }, [
+    selectedInstall,
+    fallbackInstallId,
+    project.github_installation_id,
+    project.github_repo_full_name,
+    project.deploy_branch,
+    project.default_branch,
+    loadBranches,
+  ]);
 
   async function onMockConnect() {
     setBusy(true);
@@ -105,6 +176,7 @@ export function GitHubPanel({
       setInfo(`Mock GitHub App installed as ${installation.account_login}`);
       await refreshInstallations();
       setSelectedInstall(installation.id);
+      setRepoPickerOpen(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Mock install failed");
     } finally {
@@ -121,6 +193,7 @@ export function GitHubPanel({
       setInstallations(items);
       if (items[0]) {
         setSelectedInstall(items[0].id);
+        setRepoPickerOpen(true);
         setInfo(
           `Synced ${items.length} installation${items.length === 1 ? "" : "s"}`,
         );
@@ -142,15 +215,24 @@ export function GitHubPanel({
     setBusy(true);
     setError(null);
     try {
+      const branchForAttach =
+        deployBranch && branches.some((b) => b.name === deployBranch)
+          ? deployBranch
+          : repo.default_branch;
       const updated = await attachGitHubRepo(project.id, {
         installation_id: selectedInstall,
         repo_id: repo.id,
         full_name: repo.full_name,
         default_branch: repo.default_branch,
-        deploy_branch: deployBranch || repo.default_branch,
+        deploy_branch: branchForAttach,
       });
+      // Keep installation + repo picker open after attach.
+      setRepoPickerOpen(true);
+      setSelectedInstall(selectedInstall);
+      setDeployBranch(repo.default_branch);
       onProjectChange(updated);
       setInfo(`Attached ${repo.full_name}`);
+      await loadBranches(selectedInstall, repo.full_name, repo.default_branch);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Attach failed");
     } finally {
@@ -184,7 +266,7 @@ export function GitHubPanel({
       setInfo(
         simulateFailure
           ? `Simulated failure — prior release retained (${job.status})`
-          : `Deployment ${job.status}${job.app_url ? ` · ${job.app_url}` : ""}`,
+          : `Deployment ${job.status}${job.app_url ? ` · ${job.app_url}` : ""}${job.public_url ? ` · share ${job.public_url}` : ""}`,
       );
       setSelectedJob(job);
       refreshDeployments();
@@ -286,7 +368,11 @@ export function GitHubPanel({
               id="installation"
               className="h-10 w-full rounded-md border border-border bg-white/70 px-3 text-sm"
               value={selectedInstall}
-              onChange={(e) => setSelectedInstall(e.target.value)}
+              onChange={(e) => {
+                setSelectedInstall(e.target.value);
+                setRepoPickerOpen(true);
+                setRepoVisibleCount(REPO_PAGE_SIZE);
+              }}
             >
               {installations.map((i) => (
                 <option key={i.id} value={i.id}>
@@ -317,14 +403,21 @@ export function GitHubPanel({
                     )
                   </>
                 ) : null}
-                , then click <span className="font-medium text-ink">Sync / Refresh installations</span>.
-                Signing in alone does not grant repo access.
+                , then click{" "}
+                <span className="font-medium text-ink">
+                  Sync / Refresh installations
+                </span>
+                . Signing in alone does not grant repo access.
               </>
             ) : (
               <>
-                No installations yet. Use <span className="font-medium text-ink">Connect mock GitHub App</span>{" "}
+                No installations yet. Use{" "}
+                <span className="font-medium text-ink">
+                  Connect mock GitHub App
+                </span>{" "}
                 for local demos, or configure a real GitHub App and set{" "}
-                <span className="font-mono text-xs">GITHUB_MOCK_MODE=false</span>.
+                <span className="font-mono text-xs">GITHUB_MOCK_MODE=false</span>
+                .
               </>
             )}
           </p>
@@ -338,30 +431,71 @@ export function GitHubPanel({
         ) : null}
 
         {repos.length > 0 ? (
-          <ul className="divide-y divide-border/70 border border-border/60">
-            {repos.map((repo) => (
-              <li
-                key={repo.id}
-                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label>Repositories</Label>
+              <button
+                type="button"
+                className="font-mono text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+                onClick={() => setRepoPickerOpen((open) => !open)}
               >
-                <div>
-                  <p className="font-medium text-ink">{repo.full_name}</p>
-                  <p className="font-mono text-xs text-muted-foreground">
-                    default {repo.default_branch}
-                    {repo.private ? " · private" : " · public"}
+                {repoPickerOpen ? "Hide list" : "Show list"}
+              </button>
+            </div>
+            {repoPickerOpen ? (
+              <div className="overflow-hidden border border-border/60">
+                <ul className="max-h-[22rem] divide-y divide-border/70 overflow-y-auto">
+                  {visibleRepos.map((repo) => (
+                    <li
+                      key={repo.id}
+                      className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                    >
+                      <div>
+                        <p className="font-medium text-ink">{repo.full_name}</p>
+                        <p className="font-mono text-xs text-muted-foreground">
+                          default {repo.default_branch}
+                          {repo.private ? " · private" : " · public"}
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => onAttach(repo)}
+                        className="h-9"
+                      >
+                        {project.github_repo_id === repo.id
+                          ? "Attached"
+                          : "Attach"}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 bg-white/50 px-4 py-2">
+                  <p className="font-mono text-[11px] text-muted-foreground">
+                    Showing {visibleRepos.length} of {repos.length}
                   </p>
+                  {hasMoreRepos ? (
+                    <Button
+                      variant="outline"
+                      className="h-8"
+                      disabled={busy}
+                      onClick={() =>
+                        setRepoVisibleCount((n) =>
+                          Math.min(n + REPO_PAGE_SIZE, repos.length),
+                        )
+                      }
+                    >
+                      Load more
+                    </Button>
+                  ) : null}
                 </div>
-                <Button
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => onAttach(repo)}
-                  className="h-9"
-                >
-                  {project.github_repo_id === repo.id ? "Attached" : "Attach"}
-                </Button>
-              </li>
-            ))}
-          </ul>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Repo list hidden — show it to attach or change repository.
+              </p>
+            )}
+          </div>
         ) : null}
 
         {config && !config.mock_mode && config.app_configured ? (
@@ -398,14 +532,36 @@ export function GitHubPanel({
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[12rem] flex-1 space-y-2">
             <Label htmlFor="deploy-branch">Deploy branch</Label>
-            <Input
+            <select
               id="deploy-branch"
+              className="h-10 w-full rounded-md border border-border bg-white/70 px-3 font-mono text-sm"
               value={deployBranch}
+              disabled={!project.github_repo_full_name || branches.length === 0}
               onChange={(e) => setDeployBranch(e.target.value)}
-              className="h-10 bg-white/70 font-mono text-sm"
-            />
+            >
+              {branches.length === 0 ? (
+                <option value={deployBranch}>
+                  {project.github_repo_full_name
+                    ? "Loading branches…"
+                    : "Attach a repo first"}
+                </option>
+              ) : (
+                branches.map((b) => (
+                  <option key={b.name} value={b.name}>
+                    {b.name}
+                    {b.name === project.default_branch ? " (default)" : ""}
+                    {b.protected ? " · protected" : ""}
+                  </option>
+                ))
+              )}
+            </select>
           </div>
-          <Button variant="outline" disabled={busy} onClick={onSaveBranch} className="h-10">
+          <Button
+            variant="outline"
+            disabled={busy || !project.github_repo_full_name || branches.length === 0}
+            onClick={onSaveBranch}
+            className="h-10"
+          >
             Save branch
           </Button>
           <Button
@@ -417,7 +573,11 @@ export function GitHubPanel({
           </Button>
           <Button
             variant="outline"
-            disabled={busy || releases.filter((r) => r.is_current || r.status === "superseded").length < 2}
+            disabled={
+              busy ||
+              releases.filter((r) => r.is_current || r.status === "superseded")
+                .length < 2
+            }
             onClick={onRollback}
             className="h-10"
           >
@@ -461,15 +621,53 @@ export function GitHubPanel({
         ) : (
           <ul className="divide-y divide-border/60 border border-border/50">
             {releases.map((r) => (
-              <li key={r.id} className="px-4 py-3 text-sm">
+              <li key={r.id} className="space-y-1 px-4 py-3 text-sm">
                 <div className="flex flex-wrap justify-between gap-2">
-                  <span className="font-mono text-xs">{r.image_digest.slice(0, 19)}…</span>
+                  <span className="font-mono text-xs">
+                    {r.image_digest.slice(0, 19)}…
+                  </span>
                   <span className="font-mono text-[11px] uppercase">
                     {r.is_current ? "current · " : ""}
                     {r.status}
                   </span>
                 </div>
-                <p className="text-muted-foreground">{r.app_url ?? "—"}</p>
+                <p className="text-muted-foreground">
+                  Local:{" "}
+                  {r.app_url ? (
+                    <a
+                      className="font-mono text-ink underline-offset-2 hover:underline"
+                      href={r.app_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {r.app_url}
+                    </a>
+                  ) : (
+                    "—"
+                  )}
+                </p>
+                {r.public_url ? (
+                  <p className="text-ink">
+                    <span className="font-medium">Share: </span>
+                    <a
+                      className="font-mono text-signal underline-offset-2 hover:underline"
+                      href={r.public_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {r.public_url}
+                    </a>
+                    <span className="mt-0.5 block font-mono text-[11px] text-muted-foreground">
+                      Quick tunnel — ephemeral while the API / cloudflared
+                      process stays running.
+                    </span>
+                  </p>
+                ) : r.is_current ? (
+                  <p className="font-mono text-[11px] text-muted-foreground">
+                    No public share URL (tunnel disabled or unavailable). Local
+                    URL still works.
+                  </p>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -508,7 +706,9 @@ export function GitHubPanel({
                   </div>
                   <p className="mt-1 text-muted-foreground">
                     {job.trigger} · {job.git_ref ?? "—"}
-                    {job.image_digest ? ` · ${job.image_digest.slice(0, 15)}…` : ""}
+                    {job.image_digest
+                      ? ` · ${job.image_digest.slice(0, 15)}…`
+                      : ""}
                   </p>
                 </button>
               </li>
