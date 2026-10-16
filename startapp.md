@@ -87,6 +87,16 @@ make down
 # or: docker compose down
 ```
 
+## Shareable public demo (optional)
+
+To let someone else open one HTTPS link (UI + API on the same hostname so cookies work), see **`docs/shareable-demo.md`**.
+
+```powershell
+# With API + web already running:
+.\scripts\start-shareable-demo.ps1 -ApplyEnv
+# Restart make api / make web, then set the GitHub App callback to the printed URL.
+```
+
 ## Notes
 
 - Login ≠ repo access: install/sync the **GitHub App** to attach repos (`README.md`, `docs/real-infra.md`).
