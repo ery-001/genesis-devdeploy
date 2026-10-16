@@ -55,6 +55,8 @@ def create_session(
     user: User,
     settings: Settings,
     response: Response,
+    *,
+    secure: bool | None = None,
 ) -> None:
     token = new_session_token()
     expires = datetime.now(UTC) + timedelta(seconds=settings.session_ttl_seconds)
@@ -70,7 +72,7 @@ def create_session(
         key=settings.session_cookie_name,
         value=token,
         httponly=True,
-        secure=settings.session_cookie_secure,
+        secure=settings.session_cookie_secure if secure is None else secure,
         samesite="lax",
         max_age=settings.session_ttl_seconds,
         path="/",
@@ -351,7 +353,12 @@ def upsert_oauth_user(
     return user
 
 
-def start_oauth_state(provider: str) -> str:
+def start_oauth_state(
+    provider: str,
+    *,
+    api_base: str,
+    web_origin: str,
+) -> str:
     if provider not in OAUTH_PROVIDERS:
         raise HTTPException(status_code=400, detail="Unsupported OAuth provider")
     state = secrets.token_urlsafe(16)
@@ -360,14 +367,20 @@ def start_oauth_state(provider: str) -> str:
         redis.setex(
             f"auth:oauth:{state}",
             600,
-            json.dumps({"provider": provider}),
+            json.dumps(
+                {
+                    "provider": provider,
+                    "api_base": api_base.rstrip("/"),
+                    "web_origin": web_origin.rstrip("/"),
+                }
+            ),
         )
     finally:
         redis.close()
     return state
 
 
-def consume_oauth_state(state: str, provider: str) -> None:
+def consume_oauth_state(state: str, provider: str) -> dict:
     redis = get_redis()
     try:
         raw = redis.get(f"auth:oauth:{state}")
@@ -377,6 +390,7 @@ def consume_oauth_state(state: str, provider: str) -> None:
         if data.get("provider") != provider:
             raise HTTPException(status_code=400, detail="OAuth provider mismatch")
         redis.delete(f"auth:oauth:{state}")
+        return data if isinstance(data, dict) else {"provider": provider}
     finally:
         redis.close()
 

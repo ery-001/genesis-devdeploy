@@ -20,11 +20,14 @@ from devdeploy_api.config import Settings
 ProviderStatus = dict[str, Any]
 
 
-def oauth_callback_url(settings: Settings, provider: str) -> str:
-    return (
-        f"{settings.api_public_url.rstrip('/')}{settings.api_prefix}"
-        f"/auth/oauth/{provider}/callback"
-    )
+def oauth_callback_url(
+    settings: Settings,
+    provider: str,
+    *,
+    api_base: str | None = None,
+) -> str:
+    base = (api_base or settings.api_public_url).rstrip("/")
+    return f"{base}{settings.api_prefix}/auth/oauth/{provider}/callback"
 
 
 def github_oauth_client_id(settings: Settings) -> str:
@@ -58,26 +61,41 @@ def provider_configured(settings: Settings, provider: str) -> bool:
 
 
 def providers_status(settings: Settings) -> list[ProviderStatus]:
+    from devdeploy_api.public_url import oauth_callback_urls
+
     rows: list[ProviderStatus] = []
     for provider in OAUTH_PROVIDERS:
         configured = provider_configured(settings, provider)
+        primary = oauth_callback_url(settings, provider)
+        extras = (
+            oauth_callback_urls(settings)
+            if provider == "github"
+            else [primary]
+        )
         rows.append(
             {
                 "id": provider,
                 "configured": configured,
                 "enabled": settings.auth_mock_mode or configured,
-                "callback_url": oauth_callback_url(settings, provider),
+                "callback_url": primary,
+                "callback_urls": extras,
             }
         )
     return rows
 
 
-def build_authorize_url(settings: Settings, provider: str, state: str) -> str:
+def build_authorize_url(
+    settings: Settings,
+    provider: str,
+    state: str,
+    *,
+    api_base: str | None = None,
+) -> str:
     client_id, _ = provider_credentials(settings, provider)
     if not client_id:
         raise HTTPException(status_code=400, detail=f"{provider} OAuth is not configured")
 
-    redirect_uri = oauth_callback_url(settings, provider)
+    redirect_uri = oauth_callback_url(settings, provider, api_base=api_base)
 
     if provider == "github":
         qs = urlencode(
@@ -152,13 +170,15 @@ def exchange_code_for_profile(
     settings: Settings,
     provider: str,
     code: str,
+    *,
+    api_base: str | None = None,
 ) -> dict[str, str | None]:
     """Exchange authorization code for a normalized profile dict."""
     client_id, client_secret = provider_credentials(settings, provider)
     if not client_id or not client_secret:
         raise HTTPException(status_code=400, detail=f"{provider} OAuth is not configured")
 
-    redirect_uri = oauth_callback_url(settings, provider)
+    redirect_uri = oauth_callback_url(settings, provider, api_base=api_base)
 
     with httpx.Client(timeout=20.0) as client:
         if provider == "github":

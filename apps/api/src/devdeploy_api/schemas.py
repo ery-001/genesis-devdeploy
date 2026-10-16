@@ -60,6 +60,7 @@ class OAuthProviderStatus(BaseModel):
     configured: bool
     enabled: bool
     callback_url: str
+    callback_urls: list[str] = []
 
 
 class AuthConfigOut(BaseModel):
@@ -67,6 +68,7 @@ class AuthConfigOut(BaseModel):
     providers: list[str]
     oauth_providers: list[OAuthProviderStatus] = []
     session_cookie: str
+    oauth_callback_urls: list[str] = []
 
 
 class ProjectCreate(BaseModel):

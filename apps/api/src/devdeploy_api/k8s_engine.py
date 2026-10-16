@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import atexit
 import logging
-import os
-import signal
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -18,6 +17,7 @@ log = logging.getLogger(__name__)
 
 # Track port-forwards so redeploys replace them.
 _PORT_FORWARDS: dict[str, subprocess.Popen] = {}
+_PORT_FORWARD_LOG_HANDLES: dict[str, object] = {}
 
 
 @dataclass
@@ -29,6 +29,16 @@ class DeployResult:
     mocked: bool = False
     status: str = "applied"
     public_url: str | None = None
+
+
+@dataclass
+class AccessResult:
+    """Local port-forward (+ optional public tunnel) for a running workload."""
+
+    app_url: str
+    public_url: str | None
+    host_port: int
+    logs: list[str] = field(default_factory=list)
 
 
 def kubectl_available(settings: Settings) -> bool:
@@ -74,13 +84,93 @@ def host_port_for_slug(slug: str, base: int = 18080) -> int:
     return base + (sum(ord(c) for c in slug) % 120)
 
 
-def _stop_port_forward(slug: str) -> None:
-    proc = _PORT_FORWARDS.pop(slug, None)
-    if proc and proc.poll() is None:
+def _terminate(proc: subprocess.Popen | None) -> None:
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+    except Exception:  # noqa: BLE001
         try:
-            os.kill(proc.pid, signal.SIGTERM)
+            proc.kill()
         except OSError:
             pass
+
+
+def _popen_kwargs() -> dict:
+    kwargs: dict = {"start_new_session": True}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+        kwargs.pop("start_new_session", None)
+    return kwargs
+
+
+def _stop_port_forward(slug: str) -> None:
+    proc = _PORT_FORWARDS.pop(slug, None)
+    handle = _PORT_FORWARD_LOG_HANDLES.pop(slug, None)
+    _terminate(proc)
+    if handle is not None:
+        try:
+            handle.close()  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _free_host_port(host_port: int, logs: list[str]) -> None:
+    """Best-effort: stop an orphan listener left by a previous API process."""
+    if sys.platform == "win32":
+        try:
+            # netstat -ano | findstr :PORT then taskkill — avoid PowerShell dependency.
+            out = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            ).stdout
+        except Exception as exc:  # noqa: BLE001
+            logs.append(f"Could not scan listeners for :{host_port}: {exc}")
+            return
+        needle = f":{host_port} "
+        pids: set[int] = set()
+        for line in out.splitlines():
+            if "LISTENING" not in line.upper() or needle not in line.replace("\t", " "):
+                # Also match ":18150 " with varying spacing
+                if f":{host_port}" not in line or "LISTENING" not in line.upper():
+                    continue
+            parts = line.split()
+            if not parts:
+                continue
+            try:
+                pids.add(int(parts[-1]))
+            except ValueError:
+                continue
+        for pid in pids:
+            if pid <= 0:
+                continue
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                logs.append(f"Freed orphan listener on :{host_port} (pid={pid})")
+            except Exception as exc:  # noqa: BLE001
+                logs.append(f"Could not kill pid {pid} on :{host_port}: {exc}")
+        return
+    # Unix: fuser if available
+    try:
+        subprocess.run(
+            ["fuser", "-k", f"{host_port}/tcp"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def ensure_port_forward(
@@ -90,6 +180,7 @@ def ensure_port_forward(
     logs: list[str] = []
     host_port = host_port_for_slug(slug)
     _stop_port_forward(slug)
+    _free_host_port(host_port, logs)
 
     cmd = ["kubectl"]
     if settings.k8s_context:
@@ -103,24 +194,35 @@ def ensure_port_forward(
         "--address=127.0.0.1",
     ]
     log_path = Path(tempfile.gettempdir()) / f"devdeploy-pf-{slug}.log"
-    log_fh = open(log_path, "w")  # noqa: SIM115 — kept open for subprocess lifetime
-    proc = subprocess.Popen(
-        cmd,
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+    log_fh = open(log_path, "w", encoding="utf-8", buffering=1)  # noqa: SIM115
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            **_popen_kwargs(),
+        )
+    except OSError as exc:
+        log_fh.close()
+        logs.append(f"ERROR: failed to start port-forward: {exc}")
+        return host_port, logs
     _PORT_FORWARDS[slug] = proc
+    _PORT_FORWARD_LOG_HANDLES[slug] = log_fh
     logs.append(f"$ kubectl port-forward svc/{service} {host_port}:80")
 
     # Wait until the port accepts connections
     import socket
 
-    deadline = time.time() + 15
+    deadline = time.time() + 20
     ready = False
     while time.time() < deadline:
         if proc.poll() is not None:
-            logs.append(f"port-forward exited early; see {log_path}")
+            logs.append(f"ERROR: port-forward exited early (code={proc.returncode}); see {log_path}")
+            try:
+                tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-20:]
+                logs.extend(tail)
+            except OSError:
+                pass
             break
         try:
             with socket.create_connection(("127.0.0.1", host_port), timeout=0.5):
@@ -131,8 +233,63 @@ def ensure_port_forward(
     if ready:
         logs.append(f"Port-forward ready on 127.0.0.1:{host_port}")
     else:
-        logs.append(f"Port-forward not confirmed yet (pid={proc.pid}); URL may come up shortly")
+        logs.append(
+            f"ERROR: Port-forward not confirmed on 127.0.0.1:{host_port} "
+            f"(pid={proc.pid}); local URL may be unavailable — see {log_path}"
+        )
     return host_port, logs
+
+
+def ensure_app_access(
+    settings: Settings,
+    *,
+    project_slug: str,
+    start_tunnel: bool = True,
+) -> AccessResult:
+    """Port-forward (+ optional public tunnel) for an already-applied workload."""
+    namespace = f"dd-{project_slug}"[:63]
+    service = f"{project_slug}-svc"
+    host_port, logs = ensure_port_forward(
+        settings,
+        namespace=namespace,
+        service=service,
+        slug=project_slug,
+    )
+    app_url = f"http://127.0.0.1:{host_port}/"
+    public_url: str | None = None
+    if start_tunnel:
+        try:
+            from devdeploy_api.tunnel import start_public_tunnel
+
+            attempts = 2 if settings.public_tunnel_enabled else 1
+            for attempt in range(1, attempts + 1):
+                tunnel = start_public_tunnel(
+                    settings, local_url=app_url, slug=project_slug
+                )
+                logs.extend(tunnel.logs)
+                public_url = tunnel.public_url
+                if public_url:
+                    logs.append(f"Shareable public URL: {public_url}")
+                    break
+                if attempt < attempts:
+                    logs.append(
+                        f"Public tunnel attempt {attempt} failed — retrying once…"
+                    )
+                    time.sleep(1.5)
+            if settings.public_tunnel_enabled and not public_url:
+                logs.append(
+                    "ERROR: Public tunnel enabled but no share URL was obtained — "
+                    "check cloudflared install/PATH and deployment logs above."
+                )
+        except Exception as exc:  # noqa: BLE001 — tunnel is best-effort for local URL
+            logs.append(f"ERROR: Public tunnel failed (local URL may still work): {exc}")
+            log.exception("Public tunnel failed for %s", project_slug)
+    return AccessResult(
+        app_url=app_url,
+        public_url=public_url,
+        host_port=host_port,
+        logs=logs,
+    )
 
 
 def _cleanup_forwards() -> None:
@@ -325,38 +482,20 @@ def deploy_to_cluster(
         if code != 0:
             raise RuntimeError(f"Rollout failed: {out}")
 
-        host_port, pf_logs = ensure_port_forward(
-            settings,
-            namespace=namespace,
-            service=f"{project_slug}-svc",
-            slug=project_slug,
-        )
-        logs.extend(pf_logs)
-        app_url = f"http://127.0.0.1:{host_port}/"
-        logs.append(f"Rollout healthy at {app_url}")
-
-        public_url: str | None = None
-        try:
-            from devdeploy_api.tunnel import start_public_tunnel
-
-            tunnel = start_public_tunnel(
-                settings, local_url=app_url, slug=project_slug
-            )
-            logs.extend(tunnel.logs)
-            public_url = tunnel.public_url
-            if public_url:
-                logs.append(f"Shareable public URL: {public_url}")
-        except Exception as exc:  # noqa: BLE001 — tunnel is best-effort
-            logs.append(f"Public tunnel failed (local URL still works): {exc}")
+        access = ensure_app_access(settings, project_slug=project_slug)
+        logs.extend(access.logs)
+        logs.append(f"Rollout healthy at {access.app_url}")
+        if access.public_url:
+            logs.append(f"Shareable public URL: {access.public_url}")
 
         return DeployResult(
-            app_url=app_url,
+            app_url=access.app_url,
             namespace=namespace,
             manifests=manifests_meta,
             logs=logs,
             mocked=False,
             status="applied",
-            public_url=public_url,
+            public_url=access.public_url,
         )
     finally:
         Path(manifest_path).unlink(missing_ok=True)
@@ -399,10 +538,15 @@ def rollback_workload(
     *,
     project_slug: str,
     image_tag: str,
-) -> list[str]:
+) -> AccessResult:
     """Point the Deployment back at a previous image and wait for rollout."""
     if effective_k8s_mock(settings) or not kubectl_available(settings):
-        return ["Mock/offline rollback — control-plane release pointer updated only"]
+        return AccessResult(
+            app_url=f"https://{project_slug}.apps.devdeploy.local",
+            public_url=None,
+            host_port=0,
+            logs=["Mock/offline rollback — control-plane release pointer updated only"],
+        )
 
     namespace = f"dd-{project_slug}"[:63]
     logs: list[str] = []
@@ -431,12 +575,14 @@ def rollback_workload(
     logs.extend((out or "").splitlines()[-20:])
     if code != 0:
         raise RuntimeError(f"Rollback rollout failed: {out}")
-    host_port, pf_logs = ensure_port_forward(
-        settings,
-        namespace=namespace,
-        service=f"{project_slug}-svc",
-        slug=project_slug,
+    access = ensure_app_access(settings, project_slug=project_slug)
+    logs.extend(access.logs)
+    logs.append(f"Workload rolled back successfully → {access.app_url}")
+    if access.public_url:
+        logs.append(f"Shareable public URL: {access.public_url}")
+    return AccessResult(
+        app_url=access.app_url,
+        public_url=access.public_url,
+        host_port=access.host_port,
+        logs=logs,
     )
-    logs.extend(pf_logs)
-    logs.append(f"Workload rolled back successfully → http://127.0.0.1:{host_port}/")
-    return logs

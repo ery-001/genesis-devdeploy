@@ -12,20 +12,39 @@ export function useRequireUser(nextPath: string) {
 
   useEffect(() => {
     let cancelled = false;
+    let settled = false;
+    const goLogin = () => {
+      router.replace(`/login?next=${encodeURIComponent(nextPath)}`);
+    };
+    const timer = window.setTimeout(() => {
+      // Avoid infinite "Checking session…" if the API/tunnel hangs.
+      if (!cancelled && !settled) {
+        settled = true;
+        setLoading(false);
+        goLogin();
+      }
+    }, 12000);
     fetchMe()
       .then((me) => {
-        if (!cancelled) {
+        if (!cancelled && !settled) {
+          settled = true;
           setUser(me);
           setLoading(false);
         }
       })
       .catch(() => {
-        if (!cancelled) {
-          router.replace(`/login?next=${encodeURIComponent(nextPath)}`);
+        if (!cancelled && !settled) {
+          settled = true;
+          setLoading(false);
+          goLogin();
         }
+      })
+      .finally(() => {
+        window.clearTimeout(timer);
       });
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [router, nextPath]);
 
