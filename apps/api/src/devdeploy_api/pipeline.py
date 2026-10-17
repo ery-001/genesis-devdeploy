@@ -146,7 +146,8 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
                     job,
                     f"Prior healthy release retained: {prior.image_digest[:19]}…",
                 )
-                db.commit()
+            _mark_preview_failed(db, project, job)
+            db.commit()
             return job
 
         try:
@@ -165,7 +166,8 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
                     job,
                     f"Prior healthy release retained: {prior.image_digest[:19]}…",
                 )
-                db.commit()
+            _mark_preview_failed(db, project, job)
+            db.commit()
             return job
 
         for line in build.logs:
@@ -216,7 +218,8 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
                         job,
                         f"Prior healthy release retained: {prior.image_digest[:19]}…",
                     )
-                    db.commit()
+                _mark_preview_failed(db, project, job)
+                db.commit()
                 return job
 
         if _was_cancelled(db, job_id):
@@ -260,7 +263,8 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
                     job,
                     f"Prior healthy release retained: {prior.image_digest[:19]}…",
                 )
-                db.commit()
+            _mark_preview_failed(db, project, job)
+            db.commit()
             return job
 
         for line in deploy.logs:
@@ -328,10 +332,92 @@ def process_job(job_id: uuid.UUID, *, step_delay: float = 0.15) -> DeploymentJob
                 preview.status = "ready"
                 preview.preview_url = deploy.public_url or deploy.app_url
                 preview.message = ok_msg
+                _notify_preview_github(db, project, job, preview, success=True)
         db.commit()
         return job
     finally:
         db.close()
+
+
+def _mark_preview_failed(
+    db: DbSession, project: Project, job: DeploymentJob
+) -> None:
+    """Flip linked PreviewEnvironment to failed and notify GitHub Checks."""
+    if job.trigger not in {"webhook_pr", "preview"} and not job.runtime_slug:
+        return
+    preview = db.execute(
+        select(PreviewEnvironment)
+        .where(PreviewEnvironment.deployment_job_id == job.id)
+        .limit(1)
+    ).scalar_one_or_none()
+    if preview is None:
+        return
+    preview.status = "failed"
+    preview.message = job.message or "Preview deploy failed"
+    _notify_preview_github(db, project, job, preview, success=False)
+
+
+def _notify_preview_github(
+    db: DbSession,
+    project: Project,
+    job: DeploymentJob,
+    preview: PreviewEnvironment,
+    *,
+    success: bool,
+) -> None:
+    """Complete GitHub Check + PR comment for preview deploys (best-effort)."""
+    from devdeploy_api import github_checks
+    from devdeploy_api.config import get_settings
+
+    settings = get_settings()
+    inst = project.github_installation
+    repo = project.github_repo_full_name
+    if inst is None or not repo or settings.effective_github_mock:
+        return
+    details = (
+        f"{settings.web_origin.rstrip('/')}/deployments/{job.id}"
+        f"?project={project.id}"
+    )
+    url = preview.preview_url or job.public_url or job.app_url or ""
+    if preview.github_check_run_id:
+        github_checks.complete_check_run(
+            settings,
+            installation_id=int(inst.installation_id),
+            repo_full_name=repo,
+            check_run_id=int(preview.github_check_run_id),
+            conclusion="success" if success else "failure",
+            title="Preview ready" if success else "Preview failed",
+            summary=(
+                f"Preview URL: {url}" if success else (job.message or "Deploy failed")
+            ),
+            details_url=details,
+        )
+    if success and url:
+        github_checks.comment_on_pull_request(
+            settings,
+            installation_id=int(inst.installation_id),
+            repo_full_name=repo,
+            pr_number=int(preview.pr_number),
+            body=(
+                f"### DevDeploy preview for PR #{preview.pr_number}\n\n"
+                f"- **Status:** ready\n"
+                f"- **URL:** {url}\n"
+                f"- **Logs:** {details}\n"
+            ),
+        )
+    elif not success:
+        github_checks.comment_on_pull_request(
+            settings,
+            installation_id=int(inst.installation_id),
+            repo_full_name=repo,
+            pr_number=int(preview.pr_number),
+            body=(
+                f"### DevDeploy preview for PR #{preview.pr_number}\n\n"
+                f"- **Status:** failed\n"
+                f"- **Detail:** {job.message or 'Deploy failed'}\n"
+                f"- **Logs:** {details}\n"
+            ),
+        )
 
 
 def rollback_project(db: DbSession, project_id: uuid.UUID) -> Release:

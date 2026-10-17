@@ -474,6 +474,29 @@ def handle_pull_request_event(
             row.status = "deploying"
             row.message = f"Refreshing preview for PR #{pr_number} ({action})"
             row.deployment_job_id = job.id
+
+        # GitHub Check (in progress) when App credentials + installation exist.
+        from devdeploy_api import github_checks
+        from devdeploy_api.config import get_settings
+
+        settings = get_settings()
+        inst = project.github_installation
+        if inst is not None and head_sha and not settings.effective_github_mock:
+            details = (
+                f"{settings.web_origin.rstrip('/')}/deployments/{job.id}"
+                f"?project={project.id}"
+            )
+            check_id = github_checks.create_check_run(
+                settings,
+                installation_id=int(inst.installation_id),
+                repo_full_name=full_name,
+                head_sha=str(head_sha),
+                details_url=details,
+            )
+            if check_id:
+                row.github_check_run_id = check_id
+                row.message = f"Deploying preview for PR #{pr_number} (check #{check_id})"
+
         db.commit()
         created = job
     return created

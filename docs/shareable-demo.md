@@ -28,6 +28,21 @@ http://127.0.0.1:18080  (scripts/demo-proxy.mjs)
 
 ## Start the public demo
 
+### Option A — named / stable tunnel (recommended)
+
+Create a Cloudflare Tunnel in Zero Trust, point its public hostname ingress at
+`http://127.0.0.1:18080`, then:
+
+```powershell
+$env:CLOUDFLARE_TUNNEL_TOKEN = "<connector token>"
+$env:PUBLIC_DEMO_URL = "https://demo.yourdomain.com"
+.\scripts\start-shareable-demo.ps1 -ApplyEnv
+```
+
+GitHub App callbacks and webhook URL stay fixed across restarts.
+
+### Option B — quick tunnel (ephemeral hostname)
+
 ```powershell
 cd C:\Users\simmy\Documents\GitHub\genesis-devdeploy
 
@@ -78,7 +93,7 @@ https://<public>/api/v1/auth/oauth/github/callback
 
 Example: if the tunnel prints `https://foo-bar-baz.trycloudflare.com`, set that public URL **and** keep the local `127.0.0.1:8741` callback so localhost testing still works.
 
-Quick tunnels mint a **new hostname each run**, so update the **public** callback whenever the tunnel URL changes (or use a named Cloudflare tunnel with a stable hostname).
+Quick tunnels mint a **new hostname each run**, so update the **public** callback whenever the tunnel URL changes. Prefer **Option A** (named tunnel + `PUBLIC_DEMO_URL`) so callbacks and Share URLs stay stable.
 
 ## Smoke checks
 
