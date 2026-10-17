@@ -47,10 +47,15 @@ Check:
 On `opened` / `synchronize` / `reopened` / `ready_for_review`:
 
 1. API creates/updates a `PreviewEnvironment` and deploys runtime slug `{project}-pr-{n}`.
-2. Share URL (stable proxy mode): `{API_PUBLIC_URL}/apps/{project}-pr-{n}/`
-3. Project settings → Preview environments lists status + URL.
+2. Opens a GitHub **Check run** (`DevDeploy Preview`) on the PR head SHA (when the App installation token is available).
+3. On success: completes the check, posts a PR comment with the Share URL, sets preview status `ready`.
+4. On failure: completes the check as `failure`, posts a failure comment, sets preview status `failed`.
+5. Share URL (stable proxy mode): `{API_PUBLIC_URL}/apps/{project}-pr-{n}/`
+6. Project settings → Preview environments lists status + URL.
 
 Manual preview without a webhook: Project settings → Create preview.
+
+GitHub App permissions needed for Checks + comments: **Checks: Read and write**, **Pull requests: Read and write** (or Issues: Write for comments).
 
 ## Auto-deploy gate
 

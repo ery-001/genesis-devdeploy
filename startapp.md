@@ -93,6 +93,7 @@ To let someone else open one HTTPS link (UI + API on the same hostname so cookie
 
 ```powershell
 # With API + web already running:
+# Stable hostname (preferred): set CLOUDFLARE_TUNNEL_TOKEN + PUBLIC_DEMO_URL first.
 .\scripts\start-shareable-demo.ps1 -ApplyEnv
 # Restart make api / make web, then set the GitHub App callback to the printed URL.
 ```
