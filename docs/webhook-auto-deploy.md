@@ -4,7 +4,7 @@ Push to the project's deploy branch → DevDeploy builds and deploys automatical
 
 ## Prerequisites
 
-1. API + web running (`startapp.md`).
+1. API + web running (`docs/getting-started.md`).
 2. Shareable demo proxy + public HTTPS origin (so GitHub can reach the webhook):
 
 ```powershell
