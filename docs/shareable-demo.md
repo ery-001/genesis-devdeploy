@@ -22,7 +22,7 @@ http://127.0.0.1:18080  (scripts/demo-proxy.mjs)
 
 ## Prerequisites
 
-1. API and web already running (`make api`, `make web`) — see `startapp.md`.
+1. API and web already running (`make api`, `make web`) — see `docs/getting-started.md`.
 2. `cloudflared` on PATH (or `%USERPROFILE%\.local\bin\cloudflared.exe`).
 3. Node.js 20+.
 
